@@ -42,13 +42,13 @@ compliance:
 # bounded by actual account balance regardless of these values (no leverage).
 # ---------------------------------------------------------------------------
 risk:
-  dry_run: true                  # true = log intended orders, place nothing
-  max_total_exposure_usd: 0.0    # TODO set <= deposited Project Bonus funds
-  max_per_position_usd: 0.0      # TODO
-  max_contracts_per_order: 0     # TODO
-  daily_loss_cap_usd: 0.0        # TODO halts new entries when breached for the day
-  min_confidence: 0.0            # TODO min agent confidence [0..1] to act
-  min_edge: 0.0                  # TODO min |fair_prob - price| edge to act
+  dry_run: false
+  max_total_exposure_usd: 20.0
+  max_per_position_usd: 5.0
+  max_contracts_per_order: 10
+  daily_loss_cap_usd: 10.0
+  min_confidence: 0.6
+  min_edge: 0.002
 
 # ---------------------------------------------------------------------------
 # STRATEGY — probability/sizing tunables for the systematic brain + exit monitor.
@@ -67,6 +67,22 @@ strategy:
   near_expiry_hours: 2.0         # close when < 2h to resolution
   stale_hours: 24.0              # consider stale after 24h held
   stale_move_pct: 0.02           # ...if price moved < 2%
+
+# ---------------------------------------------------------------------------
+# RELATIVE VALUE — external reference prices trigger Kalshi-only proposals.
+# External venues are signal inputs only; all orders still route through Kalshi.
+# ---------------------------------------------------------------------------
+relative_value:
+  enabled: true
+  min_edge: 0.025
+  min_match_confidence: 0.75
+  max_signal_age_s: 30
+  max_spread: 0.20
+  max_markets: 200
+  max_signals: 10
+  order_count: 1
+  allowed_sources:
+    - polymarket
 
 # ---------------------------------------------------------------------------
 # RUNTIME

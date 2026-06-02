@@ -35,6 +35,7 @@ def _signal_to_proposed(signal: Signal, market_price: Decimal) -> ProposedOrder:
     return ProposedOrder(
         ticker=signal.ticker,
         side=signal.side,
+        action="sell",
         price=market_price,
         count=1,            # risk gate will clamp to fit caps
         fair_prob=signal.fair_prob,
@@ -169,11 +170,12 @@ def run_agent_strategy(
             )
             counts[result.status] += 1
 
-            if result.status in ("placed", "dry_run"):
+            if result.status == "placed" and result.order_status in ("executed", "filled"):
                 journal.record_position(
                     {
                         "ticker": order.ticker,
                         "side": order.side,
+                        "action": order.action,
                         "entry_price": order.price,
                         "target_price": order.price * Decimal(str(config.strategy.target_fraction)),
                         "count": result.approved_count or order.count,

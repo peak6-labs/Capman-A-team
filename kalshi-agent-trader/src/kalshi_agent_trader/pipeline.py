@@ -77,12 +77,14 @@ def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
             )
             counts[result.status] += 1
 
-            # Record position when an order is placed (live) or dry-run tracked.
-            if result.status in ("placed", "dry_run"):
+            # Dry-run decisions are journaled by Executor; only live orders that
+            # report an immediate execution become monitorable positions here.
+            if result.status == "placed" and result.order_status in ("executed", "filled"):
                 journal.record_position(
                     {
                         "ticker": order.ticker,
                         "side": order.side,
+                        "action": order.action,
                         "entry_price": order.price,
                         "target_price": order.price * Decimal(str(config.strategy.target_fraction)),
                         "count": result.approved_count or order.count,

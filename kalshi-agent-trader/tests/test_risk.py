@@ -51,6 +51,20 @@ def test_low_edge_rejected():
     assert not r.allowed and "edge" in r.reason
 
 
+def test_sell_order_requires_price_above_fair_probability():
+    r = gate().check(order(action="sell", fair_prob=0.70, price=Decimal("0.50")), state())
+    assert not r.allowed and "edge" in r.reason
+
+
+def test_sell_order_uses_max_loss_for_exposure():
+    # Selling a 5c contract risks 95c, so $25 of per-position room allows 26 contracts.
+    r = gate().check(
+        order(action="sell", price=Decimal("0.05"), fair_prob=0.0, count=100),
+        state(),
+    )
+    assert r.allowed and r.approved_count == 26
+
+
 def test_per_position_cap_clamps_size():
     # $25 / $0.50 = 50 contracts max for this position.
     r = gate().check(order(count=100), state())

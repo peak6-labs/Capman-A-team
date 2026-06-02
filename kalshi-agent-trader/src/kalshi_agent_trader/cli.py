@@ -48,8 +48,18 @@ def _client() -> KalshiClient:
 @app.command(name="exchange")
 def exchange() -> None:
     """Show exchange/trading status (public, no auth)."""
-    with _client() as client:
-        data = client.get("/exchange/status")
+    import json as _json
+    try:
+        with _client() as client:
+            data = client.get("/exchange/status")
+    except KalshiError as exc:
+        if exc.status == 503:
+            try:
+                data = _json.loads(exc.body)
+            except Exception:
+                raise exc
+        else:
+            raise
     console.print(data)
 
 
@@ -168,6 +178,7 @@ def orderbook(ticker: str, depth: int = typer.Option(10, help="Levels per side."
 def order(
     ticker: str,
     side: str = typer.Option(..., help="yes or no"),
+    action: str = typer.Option("buy", help="buy or sell"),
     price: float = typer.Option(..., help="Limit price in dollars per contract (0..1)."),
     count: int = typer.Option(..., help="Number of contracts."),
     fair: float = typer.Option(0.0, help="Your fair probability for this side (0..1)."),
@@ -179,7 +190,7 @@ def order(
     cfg.secrets.require_kalshi()
     dry_run = cfg.risk.dry_run and not live
     prop = ProposedOrder(
-        ticker=ticker, side=side.lower(), price=Decimal(str(price)),
+        ticker=ticker, side=side.lower(), action=action.lower(), price=Decimal(str(price)),
         count=count, fair_prob=fair, confidence=confidence,
     )
     with KalshiClient(cfg) as client, Journal() as journal:
@@ -253,24 +264,24 @@ def scan_cmd(
         brain = Brain(poly)
         candidates = scanner.scan(max_pages=pages)
 
-    if not candidates:
-        console.print("[yellow]No candidates found.[/yellow]")
-        return
+        if not candidates:
+            console.print("[yellow]No candidates found.[/yellow]")
+            return
 
-    table = Table(title=f"Scan results ({len(candidates)} candidates)")
-    for col in ("ticker", "side", "price", "spread", "hours", "poly_ref", "score"):
-        table.add_column(col, overflow="fold")
+        table = Table(title=f"Scan results ({len(candidates)} candidates)")
+        for col in ("ticker", "side", "price", "spread", "hours", "poly_ref", "score"):
+            table.add_column(col, overflow="fold")
 
-    for c in candidates:
-        ref = poly.fetch_reference(c.title) if poly else None  # type: ignore[union-attr]
-        table.add_row(
-            c.ticker, c.side,
-            _fmt_cents(c.price), _fmt_cents(c.spread),
-            f"{c.hours_to_expiry:.1f}h",
-            f"{float(ref.yes_price):.0%} (sim={ref.similarity:.2f})" if ref else "—",
-            str(c.score),
-        )
-    console.print(table)
+        for c in candidates:
+            ref = poly.fetch_reference(c.title)
+            table.add_row(
+                c.ticker, c.side,
+                _fmt_cents(c.price), _fmt_cents(c.spread),
+                f"{c.hours_to_expiry:.1f}h",
+                f"{float(ref.yes_price):.0%} (sim={ref.similarity:.2f})" if ref else "—",
+                str(c.score),
+            )
+        console.print(table)
 
 
 @app.command(name="run")
@@ -286,6 +297,55 @@ def run_cmd(
         f"[bold]Cycle complete[/bold] — "
         f"scanned {counts['scanned']}, "
         f"proposed {counts['proposed']}, "
+        f"placed {counts['placed']}, "
+        f"dry_run {counts['dry_run']}, "
+        f"rejected {counts['rejected']}"
+    )
+
+
+@app.command(name="rv-scan")
+def rv_scan_cmd() -> None:
+    """Find Kalshi relative-value signals from external reference prices; place nothing."""
+    from .relative_value.pipeline import collect_signals
+
+    cfg = load_config()
+    with Journal() as journal:
+        signals = collect_signals(cfg, journal=journal)
+
+    if not signals:
+        console.print("[yellow]No relative-value signals found.[/yellow]")
+        return
+
+    table = Table(title=f"Relative-value signals ({len(signals)})")
+    for col in ("ticker", "side", "action", "kalshi", "ref", "edge", "conf", "source"):
+        table.add_column(col, overflow="fold")
+    for s in signals:
+        table.add_row(
+            s.ticker,
+            s.side,
+            s.action,
+            _fmt_cents(s.kalshi_price),
+            _fmt_cents(s.reference_prob),
+            _fmt_cents(s.edge),
+            f"{s.confidence:.2f}",
+            s.source,
+        )
+    console.print(table)
+
+
+@app.command(name="rv-run")
+def rv_run_cmd(
+    live: bool = typer.Option(False, "--live", help="Place real Kalshi orders (dry-run by default)."),
+) -> None:
+    """Run relative-value scan → Kalshi-only execute cycle."""
+    from .relative_value.pipeline import run as _run_relative_value
+
+    cfg = load_config()
+    cfg.secrets.require_kalshi()
+    counts = _run_relative_value(cfg, live=live)
+    console.print(
+        f"[bold]Relative-value cycle complete[/bold] — "
+        f"signals {counts['signals']}, "
         f"placed {counts['placed']}, "
         f"dry_run {counts['dry_run']}, "
         f"rejected {counts['rejected']}"

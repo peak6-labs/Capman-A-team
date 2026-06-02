@@ -56,14 +56,22 @@ def _executor(tmp_path, dry_run=True):
 
 def test_build_v2_body_yes_is_bid():
     body = build_v2_order_body(_order(side="yes", price=Decimal("0.56"), count=10), "cid")
-    assert body["book_side"] == "bid"
-    assert body["price_dollars"] == "0.5600"
+    assert body["side"] == "bid"
+    assert body["price"] == "0.5600"
     assert body["count"] == "10.00"
     assert body["client_order_id"] == "cid"
 
 
 def test_build_v2_body_no_is_ask():
-    assert build_v2_order_body(_order(side="no"), "cid")["book_side"] == "ask"
+    assert build_v2_order_body(_order(side="no"), "cid")["side"] == "ask"
+
+
+def test_build_v2_body_sell_yes_is_ask():
+    assert build_v2_order_body(_order(side="yes", action="sell"), "cid")["side"] == "ask"
+
+
+def test_build_v2_body_sell_no_is_bid():
+    assert build_v2_order_body(_order(side="no", action="sell"), "cid")["side"] == "bid"
 
 
 def test_compliance_blocks_before_risk(tmp_path):
@@ -94,6 +102,19 @@ def test_live_posts_v2_and_journals(tmp_path):
     assert res.status == "placed"
     assert client.posted and client.posted[0][0] == "/portfolio/events/orders"
     assert res.response["order"]["order_id"] == "ORD-1"
+
+
+def test_live_journals_explicit_action(tmp_path):
+    ex, _ = _executor(tmp_path, dry_run=False)
+    res = ex.submit(
+        _order(action="sell", fair_prob=0.30),
+        category="Sports",
+        title="Yankees win?",
+        account=_account(),
+    )
+    rows = ex.journal._conn.execute("SELECT action FROM orders").fetchall()
+    assert res.status == "placed"
+    assert rows[0]["action"] == "sell"
 
 
 def test_size_clamped_by_risk_then_placed(tmp_path):

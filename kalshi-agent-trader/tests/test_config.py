@@ -10,6 +10,7 @@ import yaml
 from kalshi_agent_trader.config import (
     AppConfig,
     ComplianceConfig,
+    RelativeValueConfig,
     RiskConfig,
     RuntimeConfig,
     SecretsConfig,
@@ -43,6 +44,10 @@ def test_load_config_compliance(tmp_path):
         runtime:
           request_timeout_s: 10
           max_requests_per_second: 5
+        relative_value:
+          min_edge: 0.03
+          min_match_confidence: 0.8
+          allowed_sources: [polymarket]
         """,
     )
     cfg = load_config(str(p))
@@ -52,6 +57,8 @@ def test_load_config_compliance(tmp_path):
     assert cfg.risk.max_total_exposure_usd == Decimal("50.0")
     assert cfg.risk.min_confidence == pytest.approx(0.6)
     assert cfg.runtime.request_timeout_s == 10
+    assert cfg.relative_value.min_edge == Decimal("0.03")
+    assert cfg.relative_value.min_match_confidence == pytest.approx(0.8)
 
 
 def test_load_config_defaults_on_empty_sections(tmp_path):
@@ -65,6 +72,12 @@ def test_load_config_defaults_on_empty_sections(tmp_path):
 def test_risk_config_decimal_coercion():
     r = RiskConfig(max_total_exposure_usd=100.5)
     assert r.max_total_exposure_usd == Decimal("100.5")
+
+
+def test_relative_value_config_decimal_coercion():
+    rv = RelativeValueConfig(min_edge=0.015, max_spread=0.12)
+    assert rv.min_edge == Decimal("0.015")
+    assert rv.max_spread == Decimal("0.12")
 
 
 def test_secrets_require_kalshi_raises_without_key():

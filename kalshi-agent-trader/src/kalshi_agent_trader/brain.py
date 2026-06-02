@@ -133,6 +133,7 @@ class Brain:
                 ProposedOrder(
                     ticker=c.ticker,
                     side=c.side,
+                    action="sell",
                     price=c.price,
                     count=count,
                     fair_prob=p_yes,
