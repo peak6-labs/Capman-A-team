@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
-from .client import KalshiClient
+from .client import KalshiClient, KalshiError
 from .compliance import ComplianceGate
 from .journal import Journal
 from .risk import AccountState, ProposedOrder, RiskGate
@@ -58,10 +58,11 @@ def build_v2_order_body(order: ProposedOrder, client_order_id: str) -> Dict[str,
     return {
         "ticker": order.ticker,
         "client_order_id": client_order_id,
-        "book_side": book_side,
-        "type": "limit",
-        "price_dollars": f"{order.price:.4f}",   # FixedPointDollars
+        "side": book_side,
+        "price": f"{order.price:.4f}",           # FixedPointDollars
         "count": f"{Decimal(order.count):.2f}",  # FixedPointCount
+        "time_in_force": "good_till_canceled",
+        "self_trade_prevention_type": "taker_at_cross",
     }
 
 
@@ -115,7 +116,13 @@ class Executor:
                 order_body=body, approved_count=order.count,
             )
 
-        response = self.client.post(V2_ORDERS_PATH, json=body)
+        try:
+            response = self.client.post(V2_ORDERS_PATH, json=body)
+        except KalshiError as exc:
+            if exc.status == 503:
+                self._log(order, "rejected", gate="risk", reason="exchange closed", source=source)
+                return SubmitResult("rejected", gate="risk", reason="exchange closed")
+            raise
         order_payload = response.get("order") or {}
         order_status = order_payload.get("status")
         self.journal.record_order(

@@ -75,6 +75,34 @@ CREATE TABLE IF NOT EXISTS fills (
     price           TEXT,
     raw             TEXT
 );
+
+CREATE TABLE IF NOT EXISTS reference_quotes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              INTEGER NOT NULL,
+    source          TEXT NOT NULL,
+    event_key       TEXT,
+    market_ticker   TEXT,
+    question        TEXT,
+    yes_prob        TEXT NOT NULL,
+    confidence      REAL,
+    raw             TEXT
+);
+
+CREATE TABLE IF NOT EXISTS relative_value_signals (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              INTEGER NOT NULL,
+    source          TEXT NOT NULL,
+    market_ticker   TEXT NOT NULL,
+    title           TEXT,
+    side            TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    kalshi_price    TEXT NOT NULL,
+    reference_prob  TEXT NOT NULL,
+    edge            TEXT NOT NULL,
+    confidence      REAL,
+    outcome         TEXT NOT NULL,
+    reason          TEXT
+);
 """
 
 
@@ -180,6 +208,49 @@ class Journal:
             ),
         )
         self._conn.commit()
+
+    def record_reference_quote(self, quote: Dict[str, Any]) -> int:
+        cur = self._conn.execute(
+            """INSERT INTO reference_quotes
+               (ts, source, event_key, market_ticker, question, yes_prob, confidence, raw)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                _now_ms(),
+                quote.get("source"),
+                quote.get("event_key"),
+                quote.get("market_ticker"),
+                quote.get("question"),
+                str(quote.get("yes_prob")),
+                quote.get("confidence"),
+                json.dumps(quote.get("raw")) if quote.get("raw") is not None else None,
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def record_relative_value_signal(self, signal: Dict[str, Any]) -> int:
+        cur = self._conn.execute(
+            """INSERT INTO relative_value_signals
+               (ts, source, market_ticker, title, side, action, kalshi_price,
+                reference_prob, edge, confidence, outcome, reason)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                _now_ms(),
+                signal.get("source"),
+                signal.get("market_ticker"),
+                signal.get("title"),
+                signal.get("side"),
+                signal.get("action"),
+                str(signal.get("kalshi_price")),
+                str(signal.get("reference_prob")),
+                str(signal.get("edge")),
+                signal.get("confidence"),
+                signal.get("outcome"),
+                signal.get("reason"),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
 
     def record_position(self, pos: Dict[str, Any]) -> int:
         cur = self._conn.execute(

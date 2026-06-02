@@ -106,6 +106,29 @@ class StrategyConfig(BaseModel):
     stale_move_pct: float = 0.02
 
 
+class RelativeValueConfig(BaseModel):
+    """External-reference signal settings for Kalshi-only relative-value trading."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    min_edge: Decimal = Decimal("0.025")
+    min_match_confidence: float = 0.75
+    max_signal_age_s: int = 30
+    max_spread: Decimal = Decimal("0.20")
+    max_markets: int = 200
+    max_signals: int = 10
+    order_count: int = 1
+    allowed_sources: List[str] = Field(default_factory=lambda: ["polymarket"])
+
+    @field_validator("min_edge", "max_spread", mode="before")
+    @classmethod
+    def _to_decimal(cls, v):
+        if v is None:
+            return Decimal("0")
+        return Decimal(str(v))
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -114,6 +137,7 @@ class AppConfig(BaseModel):
     risk: RiskConfig
     runtime: RuntimeConfig
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
+    relative_value: RelativeValueConfig = Field(default_factory=RelativeValueConfig)
 
 
 def load_config(yaml_path: Optional[str] = None) -> AppConfig:
@@ -131,4 +155,5 @@ def load_config(yaml_path: Optional[str] = None) -> AppConfig:
         risk=RiskConfig(**data.get("risk", {})),
         runtime=RuntimeConfig(**data.get("runtime", {})),
         strategy=StrategyConfig(**data.get("strategy", {})),
+        relative_value=RelativeValueConfig(**data.get("relative_value", {})),
     )

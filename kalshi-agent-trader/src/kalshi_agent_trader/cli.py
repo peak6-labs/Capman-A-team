@@ -48,8 +48,18 @@ def _client() -> KalshiClient:
 @app.command(name="exchange")
 def exchange() -> None:
     """Show exchange/trading status (public, no auth)."""
-    with _client() as client:
-        data = client.get("/exchange/status")
+    import json as _json
+    try:
+        with _client() as client:
+            data = client.get("/exchange/status")
+    except KalshiError as exc:
+        if exc.status == 503:
+            try:
+                data = _json.loads(exc.body)
+            except Exception:
+                raise exc
+        else:
+            raise
     console.print(data)
 
 
@@ -287,6 +297,55 @@ def run_cmd(
         f"[bold]Cycle complete[/bold] — "
         f"scanned {counts['scanned']}, "
         f"proposed {counts['proposed']}, "
+        f"placed {counts['placed']}, "
+        f"dry_run {counts['dry_run']}, "
+        f"rejected {counts['rejected']}"
+    )
+
+
+@app.command(name="rv-scan")
+def rv_scan_cmd() -> None:
+    """Find Kalshi relative-value signals from external reference prices; place nothing."""
+    from .relative_value.pipeline import collect_signals
+
+    cfg = load_config()
+    with Journal() as journal:
+        signals = collect_signals(cfg, journal=journal)
+
+    if not signals:
+        console.print("[yellow]No relative-value signals found.[/yellow]")
+        return
+
+    table = Table(title=f"Relative-value signals ({len(signals)})")
+    for col in ("ticker", "side", "action", "kalshi", "ref", "edge", "conf", "source"):
+        table.add_column(col, overflow="fold")
+    for s in signals:
+        table.add_row(
+            s.ticker,
+            s.side,
+            s.action,
+            _fmt_cents(s.kalshi_price),
+            _fmt_cents(s.reference_prob),
+            _fmt_cents(s.edge),
+            f"{s.confidence:.2f}",
+            s.source,
+        )
+    console.print(table)
+
+
+@app.command(name="rv-run")
+def rv_run_cmd(
+    live: bool = typer.Option(False, "--live", help="Place real Kalshi orders (dry-run by default)."),
+) -> None:
+    """Run relative-value scan → Kalshi-only execute cycle."""
+    from .relative_value.pipeline import run as _run_relative_value
+
+    cfg = load_config()
+    cfg.secrets.require_kalshi()
+    counts = _run_relative_value(cfg, live=live)
+    console.print(
+        f"[bold]Relative-value cycle complete[/bold] — "
+        f"signals {counts['signals']}, "
         f"placed {counts['placed']}, "
         f"dry_run {counts['dry_run']}, "
         f"rejected {counts['rejected']}"

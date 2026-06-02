@@ -56,22 +56,22 @@ def _executor(tmp_path, dry_run=True):
 
 def test_build_v2_body_yes_is_bid():
     body = build_v2_order_body(_order(side="yes", price=Decimal("0.56"), count=10), "cid")
-    assert body["book_side"] == "bid"
-    assert body["price_dollars"] == "0.5600"
+    assert body["side"] == "bid"
+    assert body["price"] == "0.5600"
     assert body["count"] == "10.00"
     assert body["client_order_id"] == "cid"
 
 
 def test_build_v2_body_no_is_ask():
-    assert build_v2_order_body(_order(side="no"), "cid")["book_side"] == "ask"
+    assert build_v2_order_body(_order(side="no"), "cid")["side"] == "ask"
 
 
 def test_build_v2_body_sell_yes_is_ask():
-    assert build_v2_order_body(_order(side="yes", action="sell"), "cid")["book_side"] == "ask"
+    assert build_v2_order_body(_order(side="yes", action="sell"), "cid")["side"] == "ask"
 
 
 def test_build_v2_body_sell_no_is_bid():
-    assert build_v2_order_body(_order(side="no", action="sell"), "cid")["book_side"] == "bid"
+    assert build_v2_order_body(_order(side="no", action="sell"), "cid")["side"] == "bid"
 
 
 def test_compliance_blocks_before_risk(tmp_path):
