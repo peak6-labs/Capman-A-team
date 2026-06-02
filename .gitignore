@@ -1,11 +1,8 @@
-/config.py
-*.pem
-*.txt.key
+# Canonical code lives in kalshi-agent-trader/ (which has its own .gitignore).
+# Keep general secret/cache guards at the root as a backstop.
 __pycache__/
 *.pyc
+*.pem
+*.key
+*.txt.key
 .env
-bot.log
-orders.json
-positions.json
-queue.json
-thesis.json
