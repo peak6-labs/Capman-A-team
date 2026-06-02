@@ -4,3 +4,8 @@ config.py
 __pycache__/
 *.pyc
 .env
+bot.log
+orders.json
+positions.json
+queue.json
+thesis.json
