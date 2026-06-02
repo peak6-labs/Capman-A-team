@@ -98,4 +98,3 @@ def test_blended_signal_uses_targeted_sportsbook_reference():
     assert blended.fair_prob == 0.55
     assert blended.confidence == 0.85
     assert "fanduel Team A -150" in blended.rationale
-

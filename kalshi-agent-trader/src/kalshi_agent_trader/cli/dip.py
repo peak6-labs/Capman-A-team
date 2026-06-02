@@ -158,6 +158,7 @@ def dip(
         "--dry-run/--no-dry-run",
         help="Override config risk.dry_run when --execute is enabled.",
     ),
+    live: bool = typer.Option(False, "--live", help="Alias for --no-dry-run."),
 ) -> None:
     """Live intraday detector + sizing: buy title dips that over-shoot the match move.
 
@@ -180,14 +181,16 @@ def dip(
     tracker = DipTracker(params)
 
     cfg = load_config()
-    dry_run = resolve_dry_run(cfg.risk.dry_run, dry_run_override=dry_run_override)
+    dry_run = resolve_dry_run(
+        cfg.risk.dry_run, live=live, dry_run_override=dry_run_override
+    )
     if execute and not dry_run:
         cfg.secrets.require_kalshi()
     book = PositionBook()
     cat_cache: dict = {}
     exec_log: List[str] = []
 
-    def step_orders(md: MarketData, executor, signals) -> None:
+    def step_orders(md: MarketData, executor, client, signals) -> None:
         """Route each signal through the pipeline; update the book on accepted orders."""
         for s in signals:
             intent = intent_for(s, book.get(s.title_ticker), params)
@@ -200,7 +203,7 @@ def dip(
             if dry_run:
                 acct = AccountState(params.bankroll, Decimal("0"), Decimal("0"), Decimal("0"))
             else:
-                acct = Portfolio(_exec_client).account_state(intent.ticker)
+                acct = Portfolio(client).account_state(intent.ticker)
             res = executor.submit(
                 ProposedOrder(intent.ticker, intent.side, intent.price, intent.count,
                               intent.fair_prob, intent.confidence, post_only=intent.maker),
@@ -216,7 +219,7 @@ def dip(
                 book.on_enter(s) if intent.kind == "enter" else book.on_exit(intent.ticker)
         del exec_log[:-8]  # keep the last few lines
 
-    def render(md: MarketData, executor=None, status: Optional[str] = None):
+    def render(md: MarketData, client, executor=None, status: Optional[str] = None):
         universe = fetch_universe(md, gender)
         signals = tracker.update(universe)
         if queries:
@@ -225,7 +228,7 @@ def dip(
         table = _build_dip_table(signals, params, status=status)
         if executor is None:
             return table
-        step_orders(md, executor, signals)
+        step_orders(md, executor, client, signals)
         mode = "[red]LIVE[/red]" if not dry_run else "[yellow]DRY-RUN[/yellow]"
         body = "\n".join(exec_log) or "[dim]no orders yet[/dim]"
         panel = Panel(body, title=f"orders ({mode}) • fund cap ${cfg.risk.max_total_exposure_usd} • "
@@ -234,13 +237,12 @@ def dip(
 
     with _client() as client:
         md = MarketData(client)
-        _exec_client = client
         with Journal() as journal:
             executor = Executor(
                 client, ComplianceGate(cfg.compliance), RiskGate(cfg.risk), journal,
                 dry_run=dry_run) if execute else None
             if once:
-                console.print(render(md, executor))
+                console.print(render(md, client, executor))
                 return
             with Live(console=console, refresh_per_second=4, screen=False) as live:
                 try:
@@ -248,7 +250,7 @@ def dip(
                         stamp = datetime.now().strftime("%H:%M:%S")
                         try:
                             live.update(render(
-                                md, executor,
+                                md, client, executor,
                                 status=f"updated {stamp} • poll {interval}s • Ctrl-C to stop"))
                         except KalshiError as e:
                             live.update(Panel(f"[red]API error:[/red] {e}\n"

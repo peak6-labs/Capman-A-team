@@ -61,14 +61,14 @@ def run(
                 acct = Portfolio(client).account_state(intent.ticker)
             res = executor.submit(
                 ProposedOrder(intent.ticker, intent.side, intent.price, intent.count,
-                              intent.fair_prob, intent.confidence, action=intent.action),
+                              intent.fair_prob, intent.confidence, post_only=intent.maker),
                 category=category, title=title, account=acct, source="dip",
             )
             tag = {"placed": "green", "dry_run": "yellow", "rejected": "red"}.get(res.status, "white")
             mk = "maker" if intent.maker else "taker"
             exec_log.append(
                 f"[{tag}]{res.status.upper()}[/{tag}] {intent.kind} {s.name}: {mk} "
-                f"{intent.action} {intent.side} {res.approved_count}@{intent.price} "
+                f"{intent.side} {res.approved_count}@{intent.price} "
                 f"[dim]{intent.reason} — {res.reason}[/dim]")
             if res.status in ("placed", "dry_run"):
                 book.on_enter(s) if intent.kind == "enter" else book.on_exit(intent.ticker)

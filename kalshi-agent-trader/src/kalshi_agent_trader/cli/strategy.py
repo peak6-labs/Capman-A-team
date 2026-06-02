@@ -174,7 +174,7 @@ def agent_scan_cmd(
     if not cfg.secrets.anthropic_api_key:
         console.print("[red]ANTHROPIC_API_KEY not set in .env[/red]")
         raise typer.Exit(1)
-    counts = _run_agent_strategy(cfg, live=False, max_events=max_events)
+    counts = _run_agent_strategy(cfg, dry_run=True, max_events=max_events)
     console.print(
         f"[bold]Agent scan complete[/bold] — "
         f"events scanned {counts['events_scanned']}, "

@@ -187,4 +187,3 @@ def blended_signal_from_quotes(
         ),
         source=signal.source,
     )
-
