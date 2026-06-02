@@ -137,8 +137,8 @@ class MarketAgent:
             f"Spread: {float(candidate.spread):.1%}\n"
             f"Hours to expiry: {candidate.hours_to_expiry:.1f}h"
             f"{poly_note}\n\n"
-            "What is the true probability of the YES outcome? "
-            "Is this market mispriced enough to sell? Return your fair_prob for YES, "
+            f"What is the true probability of the {candidate.side.upper()} outcome? "
+            f"Is this market mispriced enough to sell? Return your fair_prob for {candidate.side.upper()}, "
             "confidence, and rationale."
         )
         signals = self._call(user_content)

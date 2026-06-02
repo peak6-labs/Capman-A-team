@@ -68,7 +68,11 @@ class Portfolio:
             return abs(_dec(p.get("position_cost_dollars") or p.get("market_exposure_dollars")))
 
         def rest_notional(o: dict) -> Decimal:
-            return _dec(o.get("price_dollars")) * _dec(o.get("count"))
+            price = _dec(o.get("price_dollars"))
+            count = _dec(o.get("count"))
+            if str(o.get("action", "")).lower() == "sell":
+                return (Decimal("1") - price) * count
+            return price * count
 
         total = sum((pos_cost(p) for p in positions), Decimal("0")) + sum(
             (rest_notional(o) for o in resting), Decimal("0")

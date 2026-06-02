@@ -18,6 +18,7 @@ def _pos(
     expiry_hours=24.0,
     opened_hours_ago=1.0,
     count=1,
+    action="sell",
 ):
     now = datetime.now(timezone.utc)
     opened_ts = int((now - timedelta(hours=opened_hours_ago)).timestamp() * 1000)
@@ -26,6 +27,7 @@ def _pos(
         "id": 1,
         "ticker": ticker,
         "side": side,
+        "action": action,
         "entry_price": entry_price,
         "target_price": target_price,
         "expiry": expiry,
@@ -106,3 +108,27 @@ def test_run_once_empty_positions():
     monitor._journal.open_positions.return_value = []
     results = monitor.run_once()
     assert results == []
+
+
+def test_live_close_keeps_position_open_until_fill():
+    pos = _pos()
+    monitor = _monitor(_market(bid="0.01"), live=True)
+    monitor._journal.open_positions.return_value = [pos]
+    monitor._client.post.return_value = {"order": {"order_id": "CLOSE-1", "status": "resting"}}
+
+    results = monitor.run_once()
+
+    assert results[0][1] == ExitReason.TARGET_HIT
+    monitor._journal.record_order.assert_called_once()
+    monitor._journal.close_position.assert_not_called()
+
+
+def test_live_close_marks_position_closed_on_execution():
+    pos = _pos()
+    monitor = _monitor(_market(bid="0.01"), live=True)
+    monitor._journal.open_positions.return_value = [pos]
+    monitor._client.post.return_value = {"order": {"order_id": "CLOSE-1", "status": "executed"}}
+
+    monitor.run_once()
+
+    monitor._journal.close_position.assert_called_once_with(pos["id"], ExitReason.TARGET_HIT.value)

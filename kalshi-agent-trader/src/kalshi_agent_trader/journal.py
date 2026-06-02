@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS positions (
     closed_ts    INTEGER,
     ticker       TEXT NOT NULL,
     side         TEXT NOT NULL,
+    action       TEXT DEFAULT 'sell',
     entry_price  TEXT NOT NULL,
     target_price TEXT NOT NULL,
     count        INTEGER NOT NULL,
@@ -88,7 +89,16 @@ class Journal:
         self._conn = sqlite3.connect(str(path))
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(positions)")
+        }
+        if "action" not in columns:
+            self._conn.execute("ALTER TABLE positions ADD COLUMN action TEXT DEFAULT 'sell'")
 
     def close(self) -> None:
         self._conn.close()
@@ -174,13 +184,14 @@ class Journal:
     def record_position(self, pos: Dict[str, Any]) -> int:
         cur = self._conn.execute(
             """INSERT INTO positions
-               (opened_ts, ticker, side, entry_price, target_price, count,
+               (opened_ts, ticker, side, action, entry_price, target_price, count,
                 order_id, expiry, confidence)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 _now_ms(),
                 pos["ticker"],
                 pos["side"],
+                pos.get("action", "sell"),
                 str(pos["entry_price"]),
                 str(pos["target_price"]),
                 pos["count"],

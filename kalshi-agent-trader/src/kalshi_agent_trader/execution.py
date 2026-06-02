@@ -38,11 +38,23 @@ class SubmitResult:
     order_body: Optional[Dict[str, Any]] = None
     response: Optional[Dict[str, Any]] = None
     approved_count: int = 0
+    order_status: Optional[str] = None
 
 
 def build_v2_order_body(order: ProposedOrder, client_order_id: str) -> Dict[str, Any]:
-    """Construct the V2 create-order body. book_side: bid=yes, ask=no."""
-    book_side = "bid" if order.side.lower() == "yes" else "ask"
+    """Construct the V2 create-order body.
+
+    `book_side` is from the orderbook's perspective: buying YES or selling NO
+    joins/crosses the bid side; selling YES or buying NO joins/crosses the ask side.
+    """
+    side = order.side.lower()
+    action = order.action.lower()
+    if side not in ("yes", "no"):
+        raise ValueError(f"unsupported side: {order.side}")
+    if action not in ("buy", "sell"):
+        raise ValueError(f"unsupported action: {order.action}")
+
+    book_side = "bid" if (side == "yes") == (action == "buy") else "ask"
     return {
         "ticker": order.ticker,
         "client_order_id": client_order_id,
@@ -104,17 +116,19 @@ class Executor:
             )
 
         response = self.client.post(V2_ORDERS_PATH, json=body)
+        order_payload = response.get("order") or {}
+        order_status = order_payload.get("status")
         self.journal.record_order(
             {
                 "client_order_id": client_order_id,
-                "kalshi_order_id": (response.get("order") or {}).get("order_id"),
+                "kalshi_order_id": order_payload.get("order_id"),
                 "market_ticker": order.ticker,
                 "side": order.side,
-                "action": "buy",
+                "action": order.action,
                 "order_type": "limit",
                 "count": order.count,
                 "price": str(order.price),
-                "status": "placed",
+                "status": order_status or "placed",
                 "raw": response,
             }
         )
@@ -122,6 +136,7 @@ class Executor:
         return SubmitResult(
             "placed", reason=risk.reason, client_order_id=client_order_id,
             order_body=body, response=response, approved_count=order.count,
+            order_status=order_status,
         )
 
     def cancel(self, order_id: str) -> Dict[str, Any]:

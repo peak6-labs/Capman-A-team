@@ -30,6 +30,7 @@ class ProposedOrder:
     count: int              # desired contracts
     fair_prob: float        # agent/strategy fair probability for `side`, 0..1
     confidence: float       # 0..1
+    action: str = "buy"     # "buy" | "sell"
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,11 @@ class RiskGate:
         # Signal-quality gates.
         if order.confidence < c.min_confidence:
             return RiskResult(False, f"confidence {order.confidence} < min {c.min_confidence}")
-        edge = abs(order.fair_prob - float(order.price))
+        if order.action not in ("buy", "sell"):
+            return RiskResult(False, f"unsupported action: {order.action}")
+
+        price = float(order.price)
+        edge = (order.fair_prob - price) if order.action == "buy" else (price - order.fair_prob)
         if edge < c.min_edge:
             return RiskResult(False, f"edge {edge:.3f} < min {c.min_edge}")
 
@@ -79,11 +84,17 @@ class RiskGate:
         total_cap_room = c.max_total_exposure_usd - state.total_exposure_usd
         position_room = c.max_per_position_usd - state.position_exposure_usd
 
-        # Convert each dollar room to a max contract count at this price.
+        exposure_per_contract = (
+            order.price if order.action == "buy" else Decimal("1") - order.price
+        )
+        if exposure_per_contract <= 0:
+            return RiskResult(False, "non-positive exposure")
+
+        # Convert each dollar room to a max contract count at max loss per contract.
         def contracts_for(room_usd: Decimal) -> int:
             if room_usd <= 0:
                 return 0
-            return int(room_usd / order.price)
+            return int(room_usd / exposure_per_contract)
 
         caps = [
             ("max_contracts_per_order", c.max_contracts_per_order),

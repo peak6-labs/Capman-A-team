@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from .client import KalshiClient, KalshiError
 from .config import StrategyConfig
@@ -33,6 +33,15 @@ NEAR_EXPIRY_H = _DEFAULTS.near_expiry_hours
 STALE_HOURS = _DEFAULTS.stale_hours
 STALE_MOVE_PCT = _DEFAULTS.stale_move_pct
 V2_ORDERS_PATH = "/portfolio/events/orders"
+
+
+def _row_get(row: Any, key: str, default=None):
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
 
 
 class ExitReason(str, Enum):
@@ -139,25 +148,50 @@ class Monitor:
 
     def _buy_to_close(self, pos, reason: ExitReason) -> None:
         side = pos["side"]
+        entry_action = _row_get(pos, "action", "sell")
+        close_action = "buy" if entry_action == "sell" else "sell"
         current_ask = None
         try:
             market = self._md.get_market(pos["ticker"])
-            current_ask = market.yes_ask if side == "yes" else market.no_ask
+            if close_action == "buy":
+                current_ask = market.yes_ask if side == "yes" else market.no_ask
+            else:
+                current_ask = market.yes_bid if side == "yes" else market.no_bid
         except Exception:
             pass
 
         close_price = current_ask or (Decimal(str(pos["entry_price"])) * Decimal("0.5"))
+        book_side = "bid" if (side == "yes") == (close_action == "buy") else "ask"
         body = {
             "ticker": pos["ticker"],
             "client_order_id": str(uuid.uuid4()),
-            "book_side": "bid" if side == "yes" else "ask",
+            "book_side": book_side,
             "type": "limit",
             "price_dollars": f"{close_price:.4f}",
             "count": f"{Decimal(str(pos['count'])):.2f}",
         }
         try:
-            self._client.post(V2_ORDERS_PATH, json=body)
-            self._journal.close_position(pos["id"], reason.value)
-            print(f"    → close order placed @ ${close_price:.4f}")
+            response = self._client.post(V2_ORDERS_PATH, json=body)
+            order_payload = response.get("order") or {}
+            order_status = order_payload.get("status")
+            self._journal.record_order(
+                {
+                    "client_order_id": body["client_order_id"],
+                    "kalshi_order_id": order_payload.get("order_id"),
+                    "market_ticker": pos["ticker"],
+                    "side": side,
+                    "action": close_action,
+                    "order_type": "limit",
+                    "count": pos["count"],
+                    "price": str(close_price),
+                    "status": order_status or "placed",
+                    "raw": response,
+                }
+            )
+            if order_status in ("executed", "filled"):
+                self._journal.close_position(pos["id"], reason.value)
+                print(f"    → close filled @ ${close_price:.4f}")
+            else:
+                print(f"    → close order placed @ ${close_price:.4f} ({order_status or 'unknown'})")
         except Exception as e:
             print(f"    [CLOSE ERROR] {pos['ticker']}: {e}")

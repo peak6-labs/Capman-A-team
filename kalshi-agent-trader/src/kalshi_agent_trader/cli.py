@@ -168,6 +168,7 @@ def orderbook(ticker: str, depth: int = typer.Option(10, help="Levels per side."
 def order(
     ticker: str,
     side: str = typer.Option(..., help="yes or no"),
+    action: str = typer.Option("buy", help="buy or sell"),
     price: float = typer.Option(..., help="Limit price in dollars per contract (0..1)."),
     count: int = typer.Option(..., help="Number of contracts."),
     fair: float = typer.Option(0.0, help="Your fair probability for this side (0..1)."),
@@ -179,7 +180,7 @@ def order(
     cfg.secrets.require_kalshi()
     dry_run = cfg.risk.dry_run and not live
     prop = ProposedOrder(
-        ticker=ticker, side=side.lower(), price=Decimal(str(price)),
+        ticker=ticker, side=side.lower(), action=action.lower(), price=Decimal(str(price)),
         count=count, fair_prob=fair, confidence=confidence,
     )
     with KalshiClient(cfg) as client, Journal() as journal:
@@ -253,24 +254,24 @@ def scan_cmd(
         brain = Brain(poly)
         candidates = scanner.scan(max_pages=pages)
 
-    if not candidates:
-        console.print("[yellow]No candidates found.[/yellow]")
-        return
+        if not candidates:
+            console.print("[yellow]No candidates found.[/yellow]")
+            return
 
-    table = Table(title=f"Scan results ({len(candidates)} candidates)")
-    for col in ("ticker", "side", "price", "spread", "hours", "poly_ref", "score"):
-        table.add_column(col, overflow="fold")
+        table = Table(title=f"Scan results ({len(candidates)} candidates)")
+        for col in ("ticker", "side", "price", "spread", "hours", "poly_ref", "score"):
+            table.add_column(col, overflow="fold")
 
-    for c in candidates:
-        ref = poly.fetch_reference(c.title) if poly else None  # type: ignore[union-attr]
-        table.add_row(
-            c.ticker, c.side,
-            _fmt_cents(c.price), _fmt_cents(c.spread),
-            f"{c.hours_to_expiry:.1f}h",
-            f"{float(ref.yes_price):.0%} (sim={ref.similarity:.2f})" if ref else "—",
-            str(c.score),
-        )
-    console.print(table)
+        for c in candidates:
+            ref = poly.fetch_reference(c.title)
+            table.add_row(
+                c.ticker, c.side,
+                _fmt_cents(c.price), _fmt_cents(c.spread),
+                f"{c.hours_to_expiry:.1f}h",
+                f"{float(ref.yes_price):.0%} (sim={ref.similarity:.2f})" if ref else "—",
+                str(c.score),
+            )
+        console.print(table)
 
 
 @app.command(name="run")

@@ -76,4 +76,4 @@ runtime:
   # client-side throttle to stay under Basic tier (~10 auth req/s)
   max_requests_per_second: 8
   # set false when behind a corporate proxy that re-signs TLS (e.g. PEAK6)
-  verify_ssl: false
+  verify_ssl: true
