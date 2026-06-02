@@ -24,6 +24,7 @@ uv run kalshi-trader <command>
 | `kill` / `unkill` | — | Engage/clear the kill switch |
 | `scan` | No | Run scanner, print candidates table |
 | `run [--live]` | Yes | Full scan → brain → execute cycle |
+| `monitor [--once] [--live]` | Yes | Poll open positions and close on exit triggers |
 | `agent-scan` | Yes | Claude finds opportunities (dry mode) |
 | `agent-run [--live]` | Yes | Agent-enhanced scan → evaluate → execute |
 | `breakeven` | No | French Open two-market hedge/fade screener |
@@ -37,8 +38,17 @@ uv run kalshi-trader <command>
 **`config.py`**
 Loads `config.yaml` + `.env` into typed config objects. Entry point for all settings.
 - `SecretsConfig` — API keys (env/dotenv)
-- `ComplianceConfig` / `RiskConfig` / `RuntimeConfig` — from `config.yaml`
+- `ComplianceConfig` / `RiskConfig` / `RuntimeConfig` / `StrategyConfig` — from `config.yaml`
+- `StrategyConfig` — brain sizing + monitor exit-trigger tunables (`strategy:` section)
 - `load_config()` — returns assembled `AppConfig`
+
+**`util.py`**
+Shared helpers: `hours_until()` (ISO timestamp → hours from now) and `volume_fp()`.
+One definition each, used by scanner / monitor / agent strategy.
+
+**`render.py`**
+Rich rendering for the CLI: generic value formatters plus the French-Open
+breakeven/fade table builders. Leaf module — keeps `cli.py` thin.
 
 **`client.py`**
 HTTP client for the Kalshi REST API.

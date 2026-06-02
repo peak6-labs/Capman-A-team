@@ -1,7 +1,7 @@
 [project]
 name = "kalshi-agent-trader"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hybrid Kalshi trading system: deterministic compliance/risk/execution core with LLM agents proposing signals."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [

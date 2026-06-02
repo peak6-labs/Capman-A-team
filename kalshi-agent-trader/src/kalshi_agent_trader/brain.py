@@ -17,15 +17,20 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import List, Optional, Tuple
 
+from .config import StrategyConfig
 from .polymarket import PolymarketClient, ReferencePrice
 from .risk import ProposedOrder
 from .scanner import ScanCandidate
 
-BANKROLL = 100.0                  # dollars available to risk (TODO: move to config.yaml)
-MAX_KELLY = 0.25                  # quarter-Kelly cap
-MAX_RISK_PER_POSITION = 0.01      # hard cap: 1% of bankroll per position
-MIN_CONFIDENCE = 0.60
-MAX_THESES = 10
+# Default sizing parameters live in StrategyConfig (config.yaml's `strategy:`
+# section overrides them). These module-level names mirror the defaults for
+# backward compatibility and convenient import.
+_DEFAULTS = StrategyConfig()
+BANKROLL = _DEFAULTS.bankroll_usd                  # dollars available to risk
+MAX_KELLY = _DEFAULTS.max_kelly                    # quarter-Kelly cap
+MAX_RISK_PER_POSITION = _DEFAULTS.max_risk_per_position  # hard cap per position
+MIN_CONFIDENCE = _DEFAULTS.min_confidence
+MAX_THESES = _DEFAULTS.max_theses
 
 # Polymarket blend weights when a reference price is found.
 _POLY_WEIGHT = 0.70
@@ -48,8 +53,13 @@ def _heuristic_discount(price: float, volume: float) -> Tuple[float, float]:
 
 
 class Brain:
-    def __init__(self, polymarket: Optional[PolymarketClient] = None) -> None:
+    def __init__(
+        self,
+        polymarket: Optional[PolymarketClient] = None,
+        strategy: Optional[StrategyConfig] = None,
+    ) -> None:
         self._poly = polymarket
+        self._s = strategy or _DEFAULTS
 
     def estimate_probability(
         self, candidate: ScanCandidate
@@ -94,15 +104,15 @@ class Brain:
         f_star = (p_no * b - p_yes_est) / b
         if f_star <= 0:
             return 0.0
-        return round(min(f_star, MAX_KELLY), 4)
+        return round(min(f_star, self._s.max_kelly), 4)
 
     def contract_count(self, kf: float, market_price: float) -> int:
         """Contracts to sell; bounded by Kelly and the hard per-position cap."""
         risk_per_contract = 1.0 - market_price
         if risk_per_contract <= 0:
             return 0
-        kelly_capital = BANKROLL * kf
-        capped_capital = BANKROLL * MAX_RISK_PER_POSITION
+        kelly_capital = self._s.bankroll_usd * kf
+        capped_capital = self._s.bankroll_usd * self._s.max_risk_per_position
         capital = min(kelly_capital, capped_capital)
         return max(1, int(capital / risk_per_contract))
 
@@ -116,7 +126,7 @@ class Brain:
         for c in candidates:
             p_yes, confidence = self.estimate_probability(c)
             kf = self.kelly_fraction(p_yes, float(c.price))
-            if kf <= 0 or confidence < MIN_CONFIDENCE:
+            if kf <= 0 or confidence < self._s.min_confidence:
                 continue
             count = self.contract_count(kf, float(c.price))
             proposals.append(
@@ -131,4 +141,4 @@ class Brain:
             )
 
         proposals.sort(key=lambda o: (o.confidence, float(o.price)), reverse=True)
-        return proposals[:MAX_THESES]
+        return proposals[: self._s.max_theses]

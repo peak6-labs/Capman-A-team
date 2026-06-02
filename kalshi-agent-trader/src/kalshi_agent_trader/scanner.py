@@ -13,13 +13,13 @@ qualify, only the cheaper one is kept (higher score = better premium per hour of
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
 
 from .compliance import ComplianceGate
 from .market_data import MarketData
 from .models import Market
+from .util import hours_until, volume_fp
 
 MIN_PRICE = Decimal("0.01")
 MAX_PRICE = Decimal("0.10")
@@ -40,23 +40,6 @@ class ScanCandidate:
     hours_to_expiry: float
     volume_fp: float
     score: float            # price * hours — higher = more premium for time held
-
-
-def _hours_until(dt_str: Optional[str]) -> Optional[float]:
-    if not dt_str:
-        return None
-    try:
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        return (dt - datetime.now(timezone.utc)).total_seconds() / 3600
-    except Exception:
-        return None
-
-
-def _volume_fp(market: Market) -> float:
-    try:
-        return float(market.volume_fp or 0)
-    except (TypeError, ValueError):
-        return 0.0
 
 
 class Scanner:
@@ -90,13 +73,13 @@ class Scanner:
             return None
 
         # Volume filter.
-        vol = _volume_fp(market)
+        vol = volume_fp(market)
         if vol < MIN_VOLUME_FP:
             return None
 
         # Time filter — prefer expected_expiration_time (resolution), fall back to expiration_time.
         expiry = market.expected_expiration_time or market.expiration_time
-        hours = _hours_until(expiry)
+        hours = hours_until(expiry)
         if hours is None or not (MIN_HOURS <= hours <= MAX_HOURS):
             return None
 

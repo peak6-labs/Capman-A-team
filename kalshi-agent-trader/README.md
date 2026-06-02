@@ -67,7 +67,7 @@ These correct several stale facts in public docs:
   `status`/`positions`.
 - **Phase 3 (compliance + risk + execution):** DONE — `compliance.py` (verified against live categories),
   `risk.py`, `execution.py` (V2 orders, dry-run, idempotency, cancel), plus `order`/`cancel`/`kill`/`unkill`
-  CLI. Full gate chain (compliance → risk → execution) demonstrated live. **26 unit tests pass.**
+  CLI. Full gate chain (compliance → risk → execution) demonstrated live. **The full unit suite (101 tests) passes.**
   Remaining: confirm exact V2 order-body field names via a live place-and-cancel — needs a funded account.
 - **Next:** Phase 4 (systematic strategy), Phase 5 (LLM scanner/analyst agents), Phase 6 (engine loop + WS).
 

@@ -20,13 +20,18 @@ from enum import Enum
 from typing import List, Optional, Tuple
 
 from .client import KalshiClient, KalshiError
+from .config import StrategyConfig
 from .journal import Journal
 from .market_data import MarketData
+from .util import hours_until
 
-TARGET_FRACTION = 0.15      # exit when bid ≤ 15% of entry price
-NEAR_EXPIRY_H = 2.0
-STALE_HOURS = 24
-STALE_MOVE_PCT = 0.02
+# Default exit-trigger values. config.yaml's `strategy:` section overrides these
+# when a StrategyConfig is passed to Monitor; the names remain for backward compat.
+_DEFAULTS = StrategyConfig()
+TARGET_FRACTION = _DEFAULTS.target_fraction   # exit when bid ≤ this fraction of entry price
+NEAR_EXPIRY_H = _DEFAULTS.near_expiry_hours
+STALE_HOURS = _DEFAULTS.stale_hours
+STALE_MOVE_PCT = _DEFAULTS.stale_move_pct
 V2_ORDERS_PATH = "/portfolio/events/orders"
 
 
@@ -37,16 +42,6 @@ class ExitReason(str, Enum):
     RESOLVED = "RESOLVED"
 
 
-def _hours_until(dt_str: Optional[str]) -> Optional[float]:
-    if not dt_str:
-        return None
-    try:
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        return (dt - datetime.now(timezone.utc)).total_seconds() / 3600
-    except Exception:
-        return None
-
-
 class Monitor:
     def __init__(
         self,
@@ -55,11 +50,13 @@ class Monitor:
         journal: Journal,
         *,
         live: bool = False,
+        strategy: Optional[StrategyConfig] = None,
     ) -> None:
         self._md = market_data
         self._client = client
         self._journal = journal
         self.live = live
+        self._s = strategy or _DEFAULTS
 
     def check_one(self, pos) -> Optional[ExitReason]:
         """Check a single open position (sqlite3.Row or dict) for an exit trigger."""
@@ -85,16 +82,16 @@ class Monitor:
         if current_bid <= target_price:
             return ExitReason.TARGET_HIT
 
-        hours_left = _hours_until(expiry)
-        if hours_left is not None and hours_left < NEAR_EXPIRY_H:
+        hours_left = hours_until(expiry)
+        if hours_left is not None and hours_left < self._s.near_expiry_hours:
             return ExitReason.NEAR_EXPIRY
 
         hours_held = (
             datetime.now(timezone.utc).timestamp() * 1000 - opened_ts
         ) / 3_600_000
-        if hours_held > STALE_HOURS:
+        if hours_held > self._s.stale_hours:
             move = abs(float(current_bid) - float(entry_price)) / float(entry_price)
-            if move < STALE_MOVE_PCT:
+            if move < self._s.stale_move_pct:
                 return ExitReason.STALE_THESIS
 
         return None

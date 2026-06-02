@@ -22,11 +22,11 @@ from ..config import AppConfig
 from ..execution import Executor
 from ..journal import Journal
 from ..market_data import MarketData
-from ..monitor import TARGET_FRACTION
 from ..polymarket import PolymarketClient
 from ..portfolio import Portfolio
 from ..risk import ProposedOrder, RiskGate
-from ..scanner import MAX_HOURS, MAX_SPREAD, MIN_HOURS, MIN_PRICE, MIN_VOLUME_FP, ScanCandidate, _hours_until, _volume_fp  # noqa: F401
+from ..scanner import MAX_HOURS, MAX_SPREAD, MIN_HOURS, MIN_PRICE, MIN_VOLUME_FP, ScanCandidate
+from ..util import hours_until, volume_fp
 from .base import Signal
 from .market_agent import MarketAgent
 
@@ -119,8 +119,8 @@ def run_agent_strategy(
                 counts["rejected"] += 1
                 continue
 
-            expiry = getattr(market, "expiration_time", None)
-            hours = _hours_until(expiry)
+            expiry = market.expected_expiration_time or market.expiration_time
+            hours = hours_until(expiry)
             if hours is None or not (MIN_HOURS <= hours <= MAX_HOURS):
                 counts["rejected"] += 1
                 continue
@@ -129,7 +129,7 @@ def run_agent_strategy(
                 counts["rejected"] += 1
                 continue
 
-            vol = _volume_fp(market)
+            vol = volume_fp(market)
             if vol < MIN_VOLUME_FP:
                 counts["rejected"] += 1
                 continue
@@ -175,7 +175,7 @@ def run_agent_strategy(
                         "ticker": order.ticker,
                         "side": order.side,
                         "entry_price": order.price,
-                        "target_price": order.price * Decimal(str(TARGET_FRACTION)),
+                        "target_price": order.price * Decimal(str(config.strategy.target_fraction)),
                         "count": result.approved_count or order.count,
                         "order_id": result.client_order_id,
                         "confidence": order.confidence,

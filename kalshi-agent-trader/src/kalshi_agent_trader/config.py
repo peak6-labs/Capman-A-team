@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Project root = kalshi-agent-trader/ (two levels above this package file).
@@ -81,6 +81,31 @@ class RuntimeConfig(BaseModel):
     verify_ssl: bool = True
 
 
+class StrategyConfig(BaseModel):
+    """Probability/sizing parameters for the systematic brain and exit monitor.
+
+    These are strategy tunables (distinct from RiskConfig's hard USD caps).
+    Defaults match the conservative starting values; override in config.yaml's
+    `strategy:` section. Calibrate the discount-driven sizing against historical
+    Kalshi resolution data before widening.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    # Sizing (brain.py)
+    bankroll_usd: float = 100.0
+    max_kelly: float = 0.25                # quarter-Kelly cap
+    max_risk_per_position: float = 0.01    # hard cap: 1% of bankroll per position
+    min_confidence: float = 0.60
+    max_theses: int = 10
+
+    # Exit triggers (monitor.py)
+    target_fraction: float = 0.15          # exit when bid ≤ this fraction of entry
+    near_expiry_hours: float = 2.0
+    stale_hours: float = 24.0
+    stale_move_pct: float = 0.02
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -88,6 +113,7 @@ class AppConfig(BaseModel):
     compliance: ComplianceConfig
     risk: RiskConfig
     runtime: RuntimeConfig
+    strategy: StrategyConfig = Field(default_factory=StrategyConfig)
 
 
 def load_config(yaml_path: Optional[str] = None) -> AppConfig:
@@ -104,4 +130,5 @@ def load_config(yaml_path: Optional[str] = None) -> AppConfig:
         compliance=ComplianceConfig(**data.get("compliance", {})),
         risk=RiskConfig(**data.get("risk", {})),
         runtime=RuntimeConfig(**data.get("runtime", {})),
+        strategy=StrategyConfig(**data.get("strategy", {})),
     )

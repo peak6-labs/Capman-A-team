@@ -17,7 +17,6 @@ from .config import AppConfig
 from .execution import Executor
 from .journal import Journal
 from .market_data import MarketData
-from .monitor import TARGET_FRACTION
 from .polymarket import PolymarketClient
 from .portfolio import Portfolio
 from .risk import RiskGate
@@ -41,10 +40,14 @@ def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
         portfolio = Portfolio(client)
         executor = Executor(client, compliance, risk, journal, dry_run=dry_run)
         scanner = Scanner(md, compliance)
-        brain = Brain(poly)
+        brain = Brain(poly, strategy=config.strategy)
 
         candidates = scanner.scan()
         proposals = brain.propose(candidates)
+
+        # Category + title were already resolved by the scanner; index them so the
+        # gate loop doesn't re-fetch each market.
+        cand_index = {(c.ticker, c.side): c for c in candidates}
 
         counts: Dict[str, int] = {
             "scanned": len(candidates),
@@ -55,11 +58,10 @@ def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
         }
 
         for order in proposals:
-            # Fetch category and title for gate evaluation.
+            cand = cand_index.get((order.ticker, order.side))
+            category = cand.category if cand else None
+            title = cand.title if cand else order.ticker
             try:
-                market = md.get_market(order.ticker)
-                category = md.category_for_market(market)
-                title = market.title or order.ticker
                 account = portfolio.account_state(order.ticker)
             except Exception as e:
                 print(f"[SKIP] {order.ticker}: {e}")
@@ -82,7 +84,7 @@ def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
                         "ticker": order.ticker,
                         "side": order.side,
                         "entry_price": order.price,
-                        "target_price": order.price * Decimal(str(TARGET_FRACTION)),
+                        "target_price": order.price * Decimal(str(config.strategy.target_fraction)),
                         "count": result.approved_count or order.count,
                         "order_id": result.client_order_id,
                         "confidence": order.confidence,
