@@ -33,6 +33,7 @@ class Market(BaseModel):
     status: Optional[str] = None
     title: Optional[str] = None
     expiration_time: Optional[str] = None
+    expected_expiration_time: Optional[str] = None
     mve_collection_ticker: Optional[str] = None
 
     # Per-player identity for structured markets (tennis, etc.). `yes_sub_title`

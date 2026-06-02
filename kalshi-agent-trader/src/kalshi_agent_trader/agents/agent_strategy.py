@@ -55,7 +55,7 @@ def run_agent_strategy(
     with (
         KalshiClient(config) as client,
         Journal() as journal,
-        PolymarketClient(timeout=config.runtime.request_timeout_s) as poly,
+        PolymarketClient(timeout=config.runtime.request_timeout_s, verify_ssl=config.runtime.verify_ssl) as poly,
     ):
         md = MarketData(client)
         compliance = ComplianceGate(config.compliance)

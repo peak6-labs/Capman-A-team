@@ -32,7 +32,8 @@ def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
     dry_run = config.risk.dry_run and not live
 
     with KalshiClient(config) as client, Journal() as journal, PolymarketClient(
-        timeout=config.runtime.request_timeout_s
+        timeout=config.runtime.request_timeout_s,
+        verify_ssl=config.runtime.verify_ssl,
     ) as poly:
         md = MarketData(client)
         compliance = ComplianceGate(config.compliance)

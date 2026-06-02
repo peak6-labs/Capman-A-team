@@ -517,7 +517,8 @@ def scan_cmd(
 
     cfg = load_config()
     with KalshiClient(cfg) as client, PolymarketClient(
-        timeout=cfg.runtime.request_timeout_s
+        timeout=cfg.runtime.request_timeout_s,
+        verify_ssl=cfg.runtime.verify_ssl,
     ) as poly:
         md = MarketData(client)
         compliance = ComplianceGate(cfg.compliance)

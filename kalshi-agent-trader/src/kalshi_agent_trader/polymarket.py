@@ -37,8 +37,8 @@ class ReferencePrice:
 
 
 class PolymarketClient:
-    def __init__(self, timeout: float = 15.0) -> None:
-        self._http = httpx.Client(timeout=timeout)
+    def __init__(self, timeout: float = 15.0, verify_ssl: bool = True) -> None:
+        self._http = httpx.Client(timeout=timeout, verify=verify_ssl)
 
     def close(self) -> None:
         self._http.close()

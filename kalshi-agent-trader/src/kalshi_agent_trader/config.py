@@ -78,6 +78,7 @@ class RuntimeConfig(BaseModel):
 
     request_timeout_s: int = 15
     max_requests_per_second: float = 8.0
+    verify_ssl: bool = True
 
 
 class AppConfig(BaseModel):

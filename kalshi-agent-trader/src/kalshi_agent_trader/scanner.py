@@ -94,8 +94,8 @@ class Scanner:
         if vol < MIN_VOLUME_FP:
             return None
 
-        # Time filter.
-        expiry = getattr(market, "expiration_time", None)
+        # Time filter — prefer expected_expiration_time (resolution), fall back to expiration_time.
+        expiry = market.expected_expiration_time or market.expiration_time
         hours = _hours_until(expiry)
         if hours is None or not (MIN_HOURS <= hours <= MAX_HOURS):
             return None
