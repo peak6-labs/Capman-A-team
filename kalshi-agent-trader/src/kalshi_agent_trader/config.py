@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -129,6 +129,40 @@ class RelativeValueConfig(BaseModel):
         return Decimal(str(v))
 
 
+class SportsbookTargetConfig(BaseModel):
+    """A specific sportsbook page to scrape for a specific Kalshi market."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    source: str
+    url: str
+    outcome: str
+    side: str = "yes"
+
+    @field_validator("side", mode="before")
+    @classmethod
+    def _side_to_string(cls, v):
+        if isinstance(v, bool):
+            return "yes" if v else "no"
+        return str(v).lower()
+
+
+class SportsbookScrapeConfig(BaseModel):
+    """Targeted sportsbook scraping, only for already-proposed Kalshi trades."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    require_quote_for_agent: bool = False
+    timeout_s: int = 10
+    max_response_bytes: int = 1_000_000
+    min_parse_confidence: float = 0.55
+    max_reference_disagreement: Optional[float] = 0.25
+    blend_weight: float = 0.50
+    user_agent: str = "Mozilla/5.0 (compatible; kalshi-agent-trader/0.1; targeted odds check)"
+    market_urls: Dict[str, List[SportsbookTargetConfig]] = Field(default_factory=dict)
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -138,6 +172,7 @@ class AppConfig(BaseModel):
     runtime: RuntimeConfig
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     relative_value: RelativeValueConfig = Field(default_factory=RelativeValueConfig)
+    sportsbook_scrape: SportsbookScrapeConfig = Field(default_factory=SportsbookScrapeConfig)
 
 
 def load_config(yaml_path: Optional[str] = None) -> AppConfig:
@@ -156,4 +191,5 @@ def load_config(yaml_path: Optional[str] = None) -> AppConfig:
         runtime=RuntimeConfig(**data.get("runtime", {})),
         strategy=StrategyConfig(**data.get("strategy", {})),
         relative_value=RelativeValueConfig(**data.get("relative_value", {})),
+        sportsbook_scrape=SportsbookScrapeConfig(**data.get("sportsbook_scrape", {})),
     )

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from decimal import Decimal as D
 
-from kalshi_agent_trader.strategies.dip_reversion.backtest import (
+from kalshi_agent_trader.dip_backtest import (
     Bar,
     aggregate,
     replay_episode,
     seed_anchor,
 )
-from kalshi_agent_trader.strategies.dip_reversion.detector import DipParams
+from kalshi_agent_trader.reversion import DipParams
 
 
 def _bar(ts, m, t):

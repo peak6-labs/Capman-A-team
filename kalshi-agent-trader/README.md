@@ -30,6 +30,28 @@ uv run kalshi-trader orderbook <TICKER>     # show an orderbook (public)
 uv run kalshi-trader auth-check             # verify signing + show balance (needs .env creds)
 ```
 
+### Execution mode
+
+Trading commands read `risk.dry_run` from `config.yaml` by default. Override that
+for a single run with `--dry-run/--no-dry-run`; `--live` is kept as an alias for
+`--no-dry-run`.
+
+```bash
+uv run kalshi-trader order <TICKER> --side yes --price 0.10 --count 1 --dry-run
+uv run kalshi-trader run --dry-run          # scan -> brain -> simulated execution
+uv run kalshi-trader run --no-dry-run       # scan -> brain -> real order path
+uv run kalshi-trader rv-run --dry-run       # relative-value simulated execution
+uv run kalshi-trader agent-run --dry-run    # agent pipeline, simulated execution
+uv run kalshi-trader monitor --once --dry-run
+uv run kalshi-trader dip --once             # alert/screen only, no order routing
+uv run kalshi-trader dip --execute --dry-run
+uv run kalshi-trader dip --execute --no-dry-run
+```
+
+Use `--dry-run` for test runs even when `config.yaml` is temporarily set live.
+Use `--no-dry-run` only after funding the account, setting risk caps, and
+confirming credentials with `auth-check`.
+
 ## Compliance
 
 PEAK6 prohibits trading equities, ETFs, indices, options, and any company/finance market. Enforced in
@@ -67,17 +89,18 @@ These correct several stale facts in public docs:
   `status`/`positions`.
 - **Phase 3 (compliance + risk + execution):** DONE — `compliance.py` (verified against live categories),
   `risk.py`, `execution.py` (V2 orders, dry-run, idempotency, cancel), plus `order`/`cancel`/`kill`/`unkill`
-  CLI. Full gate chain (compliance → risk → execution) demonstrated live. **The full unit suite (101 tests) passes.**
+  CLI. Full gate chain (compliance → risk → execution) demonstrated live. **The full unit suite (171 tests) passes.**
   Remaining: confirm exact V2 order-body field names via a live place-and-cancel — needs a funded account.
 - **Next:** Phase 4 (systematic strategy), Phase 5 (LLM scanner/analyst agents), Phase 6 (engine loop + WS).
 
 ### CLI today
 
 `exchange` · `status` · `auth-check` · `markets` · `events` · `orderbook` · `positions` ·
-`order` (dry-run unless `--live`) · `cancel` · `kill` · `unkill`
+`order` · `cancel` · `kill` · `unkill` · `breakeven` · `dip` · `scan` · `run` ·
+`rv-scan` · `rv-run` · `monitor` · `agent-scan` · `agent-run`
 
 ### Before live trading
 
 1. Fund the account (balance is $0 → every order is risk-blocked by the no-leverage rule).
 2. Set real caps in `config.yaml` (`risk:` section is all zeros = nothing trades).
-3. With `--live`, place one tiny non-marketable order to confirm the V2 body, then cancel it.
+3. With `--no-dry-run` (or `--live`), place one tiny non-marketable order to confirm the V2 body, then cancel it.

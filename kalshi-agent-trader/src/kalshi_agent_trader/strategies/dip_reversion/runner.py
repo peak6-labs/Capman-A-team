@@ -34,9 +34,12 @@ console = Console()
 
 def run(
     params: DipParams, *, gender: str, players: Optional[List[str]],
-    interval: int, once: bool, execute: bool,
+    interval: int, once: bool, execute: bool, dry_run: Optional[bool] = None,
 ) -> None:
     cfg = load_config()
+    dry_run = cfg.risk.dry_run if dry_run is None else dry_run
+    if execute and not dry_run:
+        cfg.secrets.require_kalshi()
     tracker = DipTracker(params)
     book = PositionBook()
     cat_cache: dict = {}
@@ -52,7 +55,7 @@ def run(
                 m = md.get_market(intent.ticker)
                 cat_cache[intent.ticker] = (md.category_for_market(m), m.title or "")
             category, title = cat_cache[intent.ticker]
-            if cfg.risk.dry_run:
+            if dry_run:
                 acct = AccountState(params.bankroll, Decimal("0"), Decimal("0"), Decimal("0"))
             else:
                 acct = Portfolio(client).account_state(intent.ticker)
@@ -81,7 +84,7 @@ def run(
         if executor is None:
             return table
         step_orders(md, executor, client, signals)
-        mode = "[red]LIVE[/red]" if not cfg.risk.dry_run else "[yellow]DRY-RUN[/yellow]"
+        mode = "[red]LIVE[/red]" if not dry_run else "[yellow]DRY-RUN[/yellow]"
         body = "\n".join(exec_log) or "[dim]no orders yet[/dim]"
         panel = Panel(body, title=f"orders ({mode}) • fund cap ${cfg.risk.max_total_exposure_usd} • "
                                   f"≤${cfg.risk.max_per_position_usd}/trade", border_style="dim")
@@ -92,7 +95,7 @@ def run(
         with Journal() as journal:
             executor = Executor(
                 client, ComplianceGate(cfg.compliance), RiskGate(cfg.risk), journal,
-                dry_run=cfg.risk.dry_run) if execute else None
+                dry_run=dry_run) if execute else None
             if once:
                 console.print(render(md, executor, client))
                 return

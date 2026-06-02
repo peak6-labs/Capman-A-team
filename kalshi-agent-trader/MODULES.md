@@ -19,17 +19,31 @@ uv run kalshi-trader <command>
 | `markets` | No | List open markets |
 | `events` | No | List events with categories |
 | `orderbook <TICKER>` | No | Show order book |
-| `order` | Yes | Place one order manually (dry-run by default) |
+| `order [--dry-run/--no-dry-run]` | Yes | Place one order manually |
 | `cancel <ORDER_ID>` | Yes | Cancel a resting order |
 | `kill` / `unkill` | — | Engage/clear the kill switch |
 | `scan` | No | Run scanner, print candidates table |
-| `run [--live]` | Yes | Full scan → brain → execute cycle |
-| `monitor [--once] [--live]` | Yes | Poll open positions and close on exit triggers |
+| `run [--dry-run/--no-dry-run]` | Yes | Full scan → brain → execute cycle |
+| `rv-run [--dry-run/--no-dry-run]` | Yes | Relative-value scan → execute cycle |
+| `monitor [--once] [--dry-run/--no-dry-run]` | Yes | Poll open positions and close on exit triggers |
 | `agent-scan` | Yes | Claude finds opportunities (dry mode) |
-| `agent-run [--live]` | Yes | Agent-enhanced scan → evaluate → execute |
+| `agent-run [--dry-run/--no-dry-run]` | Yes | Agent-enhanced scan → evaluate → execute |
 | `breakeven` | No | French Open two-market hedge/fade screener |
+| `dip [--execute] [--dry-run/--no-dry-run]` | No/Yes | Intraday title-dip screener; optionally route orders |
 
 ---
+
+Execution commands default to `risk.dry_run` from `config.yaml`. Use `--dry-run`
+to force simulation for a test run, or `--no-dry-run` to allow real orders for
+that invocation. `--live` remains as an alias for `--no-dry-run`.
+
+```bash
+uv run kalshi-trader run --dry-run
+uv run kalshi-trader rv-run --dry-run
+uv run kalshi-trader agent-run --dry-run
+uv run kalshi-trader dip --execute --dry-run
+uv run kalshi-trader order <TICKER> --side yes --price 0.10 --count 1 --dry-run
+```
 
 ## Source Files
 
@@ -116,6 +130,13 @@ Fetches reference prices from Polymarket's public Gamma API.
 Matches by title similarity (`difflib`). Returns `None` if no confident match (< 0.50).
 Used by brain to cross-calibrate probability estimates.
 
+**`sportsbook_scrape.py`**
+Targeted sportsbook scraping for agent-proposed Kalshi trades only.
+Fetches explicitly configured DraftKings/FanDuel/etc. URLs per ticker, parses
+American odds near a configured outcome label, converts them to implied
+probability, and can blend/reject before Kalshi execution. It does not scan or
+poll sportsbook slates.
+
 **`brain.py`**
 Converts scan candidates into `ProposedOrder` objects.
 Probability estimate = heuristic longshot discount, blended 70% Polymarket / 30% heuristic when a match is found.
@@ -180,12 +201,13 @@ tests/
   test_polymarket.py    Title matching, threshold, error handling
   test_risk.py          All cap types, kill switch, size clamping
   test_scanner.py       Filters, compliance rejection, side selection
+  test_sportsbook_scrape.py Targeted odds parsing + signal blending
   test_tennis_screen.py Player pairing, breakeven scenarios
   agents/
     test_market_agent.py  Tool-use parsing, empty signals, AgentError
 ```
 
-**101 tests, all pass.**
+**171 tests, all pass.**
 
 ---
 

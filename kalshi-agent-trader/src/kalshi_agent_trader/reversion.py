@@ -58,8 +58,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from ...tennis.fees import DEFAULT_FEE_RATE, trading_fee
-from ...tennis_screen import Universe
+from .tennis.fees import DEFAULT_FEE_RATE, trading_fee
+from .tennis.pairing import Universe
 
 D = Decimal
 _BIG = D("1e12")  # effectively-unbounded bucket room for the ranking pass

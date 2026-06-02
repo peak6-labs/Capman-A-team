@@ -9,8 +9,8 @@ from kalshi_agent_trader.breakeven import (
     FadeInputs,
     compute_breakeven,
     compute_fade,
-    trading_fee,
 )
+from kalshi_agent_trader.tennis.fees import trading_fee
 
 
 def test_trading_fee_quadratic_and_ceiled():

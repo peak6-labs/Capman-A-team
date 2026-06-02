@@ -45,6 +45,22 @@ class MarketData:
         data = self.client.get(f"/markets/{ticker}")
         return Market.model_validate(data["market"])
 
+    def get_candlesticks(
+        self, series_ticker: str, ticker: str, *,
+        start_ts: int, end_ts: int, period_interval: int = 1,
+    ) -> List[dict]:
+        """Historical OHLC + bid/ask + volume bars for a market (public, no auth).
+
+        ``period_interval`` is in minutes (1, 60, 1440). Returns the raw candle
+        dicts; prices are dollar strings under ``price``/``yes_bid``/``yes_ask``
+        (``*_dollars``) and volume under ``volume_fp``. Used by the dip backtest.
+        """
+        data = self.client.get(
+            f"/series/{series_ticker}/markets/{ticker}/candlesticks",
+            params={"start_ts": start_ts, "end_ts": end_ts, "period_interval": period_interval},
+        )
+        return data.get("candlesticks", []) or []
+
     def get_orderbook(self, ticker: str, depth: Optional[int] = None) -> Orderbook:
         # Per the API spec this endpoint requires auth; sign it when creds exist.
         params = {"depth": depth} if depth else None

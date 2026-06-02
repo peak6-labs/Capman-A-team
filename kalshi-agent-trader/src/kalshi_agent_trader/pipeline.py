@@ -8,7 +8,7 @@ cannot bypass or override those gates.
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Dict
+from typing import Dict, Optional
 
 from .brain import Brain
 from .client import KalshiClient
@@ -23,12 +23,14 @@ from .risk import RiskGate
 from .scanner import Scanner
 
 
-def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
+def run(config: AppConfig, *, live: bool = False, dry_run: Optional[bool] = None) -> Dict[str, int]:
     """Run one full scan → brain → execute cycle.
 
     Returns a summary dict: scanned, proposed, placed, dry_run, rejected.
     """
-    dry_run = config.risk.dry_run and not live
+    dry_run = config.risk.dry_run if dry_run is None else dry_run
+    if live:
+        dry_run = False
 
     with KalshiClient(config) as client, Journal() as journal, PolymarketClient(
         timeout=config.runtime.request_timeout_s,

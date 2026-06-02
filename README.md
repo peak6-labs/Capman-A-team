@@ -14,6 +14,15 @@ cp .env.example .env         # fill in KALSHI_API_KEY_ID, KALSHI_PRIVATE_KEY_PAT
 uv run kalshi-trader status  # verify
 ```
 
+Execution commands default to `risk.dry_run` from `config.yaml`, but you can
+override it per run:
+
+```bash
+uv run kalshi-trader run --dry-run        # force a simulated execution cycle
+uv run kalshi-trader run --no-dry-run     # allow real orders (same as --live)
+uv run kalshi-trader dip --execute --dry-run
+```
+
 See the package [README](kalshi-agent-trader/README.md) for the full CLI, the
 compliance model, and verified Kalshi API notes. Strategy rationale and the edge
 analysis live in [`docs/EDGES.md`](kalshi-agent-trader/docs/EDGES.md).

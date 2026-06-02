@@ -123,10 +123,12 @@ def collect_signals(
     return signals[: rv.max_signals]
 
 
-def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
+def run(config: AppConfig, *, live: bool = False, dry_run: Optional[bool] = None) -> Dict[str, int]:
     """Collect signals and submit Kalshi-only proposals through the gate chain."""
     rv = config.relative_value
-    dry_run = (not live) or config.risk.dry_run
+    dry_run = config.risk.dry_run if dry_run is None else dry_run
+    if live:
+        dry_run = False
 
     with Journal() as journal:
         signals = collect_signals(config, journal=journal)
@@ -180,4 +182,3 @@ def run(config: AppConfig, *, live: bool = False) -> Dict[str, int]:
                 )
 
     return counts
-

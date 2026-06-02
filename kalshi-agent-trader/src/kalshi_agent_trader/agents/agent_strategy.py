@@ -26,6 +26,11 @@ from ..polymarket import PolymarketClient
 from ..portfolio import Portfolio
 from ..risk import ProposedOrder, RiskGate
 from ..scanner import MAX_HOURS, MAX_SPREAD, MIN_HOURS, MIN_PRICE, MIN_VOLUME_FP, ScanCandidate
+from ..sportsbook_scrape import (
+    TargetedSportsbookScraper,
+    blended_signal_from_quotes,
+    reference_prob_for_signal,
+)
 from ..util import hours_until, volume_fp
 from .base import Signal
 from .market_agent import MarketAgent
@@ -47,10 +52,13 @@ def run_agent_strategy(
     config: AppConfig,
     *,
     live: bool = False,
+    dry_run: Optional[bool] = None,
     max_events: int = 50,
 ) -> Dict[str, int]:
     """Run one agent-enhanced scan → evaluate → execute cycle."""
-    dry_run = config.risk.dry_run and not live
+    dry_run = config.risk.dry_run if dry_run is None else dry_run
+    if live:
+        dry_run = False
     allowed_cats = {c.lower() for c in config.compliance.allowed_categories}
 
     with (
@@ -64,6 +72,7 @@ def run_agent_strategy(
         portfolio = Portfolio(client)
         executor = Executor(client, compliance, risk, journal, dry_run=dry_run)
         agent = MarketAgent(api_key=config.secrets.anthropic_api_key or "")
+        sportsbook = TargetedSportsbookScraper(config.sportsbook_scrape)
 
         # Step 1: fetch open events, pre-filter to allowed categories.
         allowed_events = []
@@ -153,6 +162,78 @@ def run_agent_strategy(
             poly_ref = poly.fetch_reference(candidate.title)
             refined = agent.evaluate(candidate, poly_ref)
 
+            # Optional targeted scrape: only after the agent has produced a
+            # prospective Kalshi trade, and only for URLs configured for this ticker.
+            sportsbook_quotes = sportsbook.fetch_for_signal(refined)
+            for quote in sportsbook_quotes:
+                yes_prob = (
+                    quote.implied_prob
+                    if quote.side.lower() == "yes"
+                    else Decimal("1") - quote.implied_prob
+                )
+                journal.record_reference_quote(
+                    {
+                        "source": quote.source,
+                        "event_key": market.event_ticker,
+                        "market_ticker": market.ticker,
+                        "question": f"{quote.outcome} @ {quote.url}",
+                        "yes_prob": yes_prob,
+                        "confidence": quote.confidence,
+                        "raw": {
+                            "american_odds": quote.american_odds,
+                            "side": quote.side,
+                            "snippet": quote.snippet,
+                        },
+                    }
+                )
+
+            if config.sportsbook_scrape.enabled:
+                if config.sportsbook_scrape.require_quote_for_agent and not sportsbook_quotes:
+                    counts["rejected"] += 1
+                    journal.record_decision(
+                        outcome="rejected",
+                        source="agent:sportsbook_scrape",
+                        market_ticker=market.ticker,
+                        side=refined.side,
+                        fair_prob=refined.fair_prob,
+                        confidence=refined.confidence,
+                        rationale=refined.rationale,
+                        gate="sportsbook_scrape",
+                        reason="no configured sportsbook quote parsed",
+                    )
+                    continue
+
+                if sportsbook_quotes:
+                    ref_probs = [
+                        reference_prob_for_signal(refined, q)
+                        for q in sportsbook_quotes
+                    ]
+                    avg_ref = sum(ref_probs, Decimal("0")) / Decimal(len(ref_probs))
+                    disagreement = abs(avg_ref - Decimal(str(refined.fair_prob)))
+                    max_disagreement = config.sportsbook_scrape.max_reference_disagreement
+                    if (
+                        max_disagreement is not None
+                        and disagreement > Decimal(str(max_disagreement))
+                    ):
+                        counts["rejected"] += 1
+                        journal.record_decision(
+                            outcome="rejected",
+                            source="agent:sportsbook_scrape",
+                            market_ticker=market.ticker,
+                            side=refined.side,
+                            fair_prob=refined.fair_prob,
+                            confidence=refined.confidence,
+                            rationale=refined.rationale,
+                            gate="sportsbook_scrape",
+                            reason=f"sportsbook disagreement {disagreement:.3f} > {max_disagreement}",
+                        )
+                        continue
+                    refined = blended_signal_from_quotes(
+                        refined,
+                        sportsbook_quotes,
+                        blend_weight=config.sportsbook_scrape.blend_weight,
+                    )
+
             # Step 5: submit through the gate chain.
             order = _signal_to_proposed(refined, bid)
             try:
@@ -166,7 +247,7 @@ def run_agent_strategy(
                 category=category,
                 title=market.title or "",
                 account=account,
-                source="agent",
+                source="agent:sportsbook_scrape" if sportsbook_quotes else "agent",
             )
             counts[result.status] += 1
 

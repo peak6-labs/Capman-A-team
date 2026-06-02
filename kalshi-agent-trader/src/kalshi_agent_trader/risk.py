@@ -31,6 +31,7 @@ class ProposedOrder:
     fair_prob: float        # agent/strategy fair probability for `side`, 0..1
     confidence: float       # 0..1
     action: str = "buy"     # "buy" | "sell"
+    post_only: bool = False  # True = maker-only: rest, never cross (Kalshi cancels if it would take)
 
 
 @dataclass(frozen=True)
