@@ -33,6 +33,8 @@ from .models import Balance
 from .portfolio import Portfolio
 from .risk import KILL_SWITCH_PATH, ProposedOrder, RiskGate
 from .tennis_screen import PlayerRow, fetch_universe, rows_from_universe
+from . import pipeline as _strategy
+from .agents.agent_strategy import run_agent_strategy as _run_agent_strategy
 
 app = typer.Typer(add_completion=False, help="Kalshi agent-trader CLI")
 console = Console()
@@ -500,6 +502,110 @@ def _build_tight_table(
     if not computed:
         table.caption = "(no matching players)\n" + legend
     return table
+
+
+@app.command(name="scan")
+def scan_cmd(
+    pages: int = typer.Option(20, help="Max pages to paginate (200 markets/page)."),
+) -> None:
+    """Scan open markets for cheap-tail candidates (public + auth for compliance)."""
+    from .brain import Brain
+    from .compliance import ComplianceGate
+    from .market_data import MarketData
+    from .polymarket import PolymarketClient
+    from .scanner import Scanner
+
+    cfg = load_config()
+    with KalshiClient(cfg) as client, PolymarketClient(
+        timeout=cfg.runtime.request_timeout_s
+    ) as poly:
+        md = MarketData(client)
+        compliance = ComplianceGate(cfg.compliance)
+        scanner = Scanner(md, compliance)
+        brain = Brain(poly)
+        candidates = scanner.scan(max_pages=pages)
+
+    if not candidates:
+        console.print("[yellow]No candidates found.[/yellow]")
+        return
+
+    table = Table(title=f"Scan results ({len(candidates)} candidates)")
+    for col in ("ticker", "side", "price", "spread", "hours", "poly_ref", "score"):
+        table.add_column(col, overflow="fold")
+
+    for c in candidates:
+        ref = poly.fetch_reference(c.title) if poly else None  # type: ignore[union-attr]
+        table.add_row(
+            c.ticker, c.side,
+            _fmt_cents(c.price), _fmt_cents(c.spread),
+            f"{c.hours_to_expiry:.1f}h",
+            f"{float(ref.yes_price):.0%} (sim={ref.similarity:.2f})" if ref else "—",
+            str(c.score),
+        )
+    console.print(table)
+
+
+@app.command(name="run")
+def run_cmd(
+    live: bool = typer.Option(False, "--live", help="Place real orders (overrides dry_run)."),
+) -> None:
+    """Run one full scan → brain → execute cycle."""
+    cfg = load_config()
+    if live:
+        cfg.secrets.require_kalshi()
+    counts = _strategy.run(cfg, live=live)
+    console.print(
+        f"[bold]Cycle complete[/bold] — "
+        f"scanned {counts['scanned']}, "
+        f"proposed {counts['proposed']}, "
+        f"placed {counts['placed']}, "
+        f"dry_run {counts['dry_run']}, "
+        f"rejected {counts['rejected']}"
+    )
+
+
+@app.command(name="agent-scan")
+def agent_scan_cmd(
+    max_events: int = typer.Option(50, help="Max open events to pass to the agent."),
+) -> None:
+    """Agent-only dry scan: Claude identifies and evaluates opportunities (no orders placed)."""
+    cfg = load_config()
+    if not cfg.secrets.anthropic_api_key:
+        console.print("[red]ANTHROPIC_API_KEY not set in .env[/red]")
+        raise typer.Exit(1)
+    counts = _run_agent_strategy(cfg, live=False, max_events=max_events)
+    console.print(
+        f"[bold]Agent scan complete[/bold] — "
+        f"events scanned {counts['events_scanned']}, "
+        f"signals {counts['agent_signals']}, "
+        f"survivors {counts['survivors']}, "
+        f"dry_run {counts['dry_run']}, "
+        f"rejected {counts['rejected']}"
+    )
+
+
+@app.command(name="agent-run")
+def agent_run_cmd(
+    live: bool = typer.Option(False, "--live", help="Place real orders (overrides dry_run)."),
+    max_events: int = typer.Option(50, help="Max open events to pass to the agent."),
+) -> None:
+    """Agent-enhanced scan → evaluate → execute cycle."""
+    cfg = load_config()
+    if not cfg.secrets.anthropic_api_key:
+        console.print("[red]ANTHROPIC_API_KEY not set in .env[/red]")
+        raise typer.Exit(1)
+    if live:
+        cfg.secrets.require_kalshi()
+    counts = _run_agent_strategy(cfg, live=live, max_events=max_events)
+    console.print(
+        f"[bold]Agent run complete[/bold] — "
+        f"events scanned {counts['events_scanned']}, "
+        f"signals {counts['agent_signals']}, "
+        f"survivors {counts['survivors']}, "
+        f"placed {counts['placed']}, "
+        f"dry_run {counts['dry_run']}, "
+        f"rejected {counts['rejected']}"
+    )
 
 
 @app.command()

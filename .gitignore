@@ -1,4 +1,4 @@
-config.py
+/config.py
 *.pem
 *.txt.key
 __pycache__/

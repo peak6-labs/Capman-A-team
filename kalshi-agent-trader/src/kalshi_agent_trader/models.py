@@ -25,7 +25,7 @@ def _to_decimal(value) -> Optional[Decimal]:
 
 
 class Market(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     ticker: str
     event_ticker: str
@@ -42,6 +42,8 @@ class Market(BaseModel):
     no_sub_title: Optional[str] = None
     custom_strike: Optional[dict] = None
     strike_type: Optional[str] = None
+
+    volume_fp: Optional[float] = None
 
     yes_bid: Optional[Decimal] = Field(default=None, alias="yes_bid_dollars")
     yes_ask: Optional[Decimal] = Field(default=None, alias="yes_ask_dollars")
