@@ -533,5 +533,117 @@ def dip(
                     interval=interval, once=once, execute=execute)
 
 
+@app.command()
+def hedge(
+    ticker: Optional[str] = typer.Option(
+        None, "--ticker", "-t",
+        help="Position market to hedge. Omit to use your sole open position."),
+    fair: float = typer.Option(
+        0.0, help="Override fair P(position loses); else de-vig the market."),
+    passive: float = typer.Option(
+        0.05, help="Passive offset: suggest a hedge bid this far below the ask."),
+) -> None:
+    """Find the best hedge — or exit — for an open match position. Places nothing.
+
+    Enumerates the equivalent 'position loses' instrument (the opponent's market
+    in the same event), prices it against the de-vigged fair, and ALWAYS compares
+    to simply exiting at the bid — flagging a hedge that exiting beats. Suggests a
+    passive limit + a size clamped to your live risk caps.
+    """
+    from .hedge import HedgeQuote, Position, Rel, evaluate, exit_pnl
+
+    def num(x):
+        try:
+            return Decimal(str(x))
+        except Exception:
+            return None
+
+    cfg = load_config()
+    with _client() as c:
+        pf = Portfolio(c)
+        livep = [p for p in pf.market_positions()
+                 if num(p.get("position_fp")) and abs(num(p.get("position_fp"))) > 0]
+        if not livep:
+            console.print("[yellow]No open positions to hedge.[/yellow]")
+            return
+        if ticker:
+            target = next((p for p in livep if p.get("ticker") == ticker), None)
+            if not target:
+                console.print(f"[red]No open position in {ticker}.[/red]")
+                return
+        elif len(livep) == 1:
+            target = livep[0]
+        else:
+            console.print("[yellow]Multiple positions — pass --ticker. Open:[/yellow] "
+                          + ", ".join(p.get("ticker") for p in livep))
+            return
+
+        tk = target["ticker"]
+        signed = num(target.get("position_fp"))
+        cnt = int(abs(signed))
+        cost = abs(num(target.get("total_traded_dollars")
+                       or target.get("market_exposure_dollars")) or Decimal("0"))
+        avg = (cost / abs(signed)) if signed else Decimal("0")
+        if signed < 0:
+            console.print("[yellow]v1 handles long-YES match positions; this is a "
+                          "short/NO position — exit symmetrically.[/yellow]")
+            return
+
+        tm = c.get(f"/markets/{tk}").get("market", {})
+        event = tm.get("event_ticker")
+        t_bid = num(tm.get("yes_bid_dollars"))
+        sibs = [m for m in c.get("/markets", params={"event_ticker": event, "limit": 50})
+                .get("markets", []) if m.get("status") == "active"]
+        others = [m for m in sibs if m.get("ticker") != tk]
+        if len(sibs) != 2 or not others:
+            console.print(f"[yellow]Event has {len(sibs)} active legs — a clean "
+                          "1-for-1 hedge is only defined for 2-outcome markets.[/yellow]")
+            return
+        opp = others[0]
+        t_mid = (t_bid + num(tm.get("yes_ask_dollars"))) / 2
+        o_bid, o_ask = num(opp.get("yes_bid_dollars")), num(opp.get("yes_ask_dollars"))
+        o_mid = (o_bid + o_ask) / 2
+        fair_lose = Decimal(str(fair)) if fair else (o_mid / (t_mid + o_mid))
+
+        pos = Position(ticker=tk, side="yes", count=cnt, avg_cost=avg)
+        q = HedgeQuote(label=f"{opp.get('yes_sub_title')} YES", ticker=opp["ticker"],
+                       buy_side="yes", ask=o_ask, fair=fair_lose, rel=Rel.EQUIVALENT)
+        ev = evaluate(pos, q, exit_bid=t_bid)
+        ex = exit_pnl(pos, t_bid)
+
+        bid = max(Decimal("0.01"), o_ask - Decimal(str(passive)))
+        acct = pf.account_state(opp["ticker"])
+        r = cfg.risk
+        room = min(acct.balance_usd - acct.total_exposure_usd,
+                   r.max_total_exposure_usd - acct.total_exposure_usd,
+                   r.max_per_position_usd - acct.position_exposure_usd)
+        max_ct = max(0, min(int(room / bid) if bid > 0 else 0,
+                            cnt, r.max_contracts_per_order))
+
+        t = Table(title=f"Hedge for {tk}  ({cnt} YES @ {_fmt_cents(avg)})",
+                  header_style="bold")
+        for col in ("option", "cost", "edge", "if position loses", "note"):
+            t.add_column(col)
+        t.add_row("EXIT — sell YES @ bid", _fmt_cents(t_bid), "—",
+                  f"{_fmt_cents(t_bid)} realized", f"P&L {ex:+.2f}")
+        t.add_row(f"HEDGE — buy {q.label}", _fmt_cents(o_ask),
+                  f"{ev.edge_per_contract:+.2f}",
+                  f"locked P&L {ev.locked_pnl:+.2f}",
+                  "[red]exit beats this[/red]" if ev.dominated_by_exit else "clean 1-for-1")
+        console.print(t)
+        rec = ("EXIT — selling realizes a better outcome than locking this hedge"
+               if ev.dominated_by_exit else
+               "HEDGE — the lay is not dominated by exiting")
+        console.print(f"[bold]Recommendation:[/bold] {rec}.")
+        if max_ct > 0:
+            console.print(f"[dim]Passive option: buy {max_ct} {q.label} @ "
+                          f"{_fmt_cents(bid)} (cap-clamped from {cnt}). Fills mainly if "
+                          f"the position recovers — weak vs a fast adverse move. "
+                          f"Places nothing.[/dim]")
+        else:
+            console.print("[dim]Risk caps leave no room for a hedge leg "
+                          "(position already near the exposure cap).[/dim]")
+
+
 if __name__ == "__main__":
     app()
