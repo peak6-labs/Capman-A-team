@@ -17,6 +17,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "trader.db"
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS positions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    opened_ts    INTEGER NOT NULL,
+    closed_ts    INTEGER,
+    ticker       TEXT NOT NULL,
+    side         TEXT NOT NULL,
+    entry_price  TEXT NOT NULL,
+    target_price TEXT NOT NULL,
+    count        INTEGER NOT NULL,
+    order_id     TEXT,
+    expiry       TEXT,
+    confidence   REAL,
+    status       TEXT DEFAULT 'open',  -- open | closed | resolved
+    close_reason TEXT
+);
+
 CREATE TABLE IF NOT EXISTS decisions (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     ts            INTEGER NOT NULL,
@@ -152,6 +168,41 @@ class Journal:
                 None if fill.get("price") is None else str(fill.get("price")),
                 json.dumps(fill.get("raw")) if fill.get("raw") is not None else None,
             ),
+        )
+        self._conn.commit()
+
+    def record_position(self, pos: Dict[str, Any]) -> int:
+        cur = self._conn.execute(
+            """INSERT INTO positions
+               (opened_ts, ticker, side, entry_price, target_price, count,
+                order_id, expiry, confidence)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                _now_ms(),
+                pos["ticker"],
+                pos["side"],
+                str(pos["entry_price"]),
+                str(pos["target_price"]),
+                pos["count"],
+                pos.get("order_id"),
+                pos.get("expiry"),
+                pos.get("confidence"),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def open_positions(self) -> list[sqlite3.Row]:
+        return list(
+            self._conn.execute(
+                "SELECT * FROM positions WHERE status = 'open' ORDER BY id"
+            )
+        )
+
+    def close_position(self, position_id: int, reason: str) -> None:
+        self._conn.execute(
+            "UPDATE positions SET status = 'closed', closed_ts = ?, close_reason = ? WHERE id = ?",
+            (_now_ms(), reason, position_id),
         )
         self._conn.commit()
 

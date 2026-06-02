@@ -51,9 +51,29 @@ risk:
   min_edge: 0.0                  # TODO min |fair_prob - price| edge to act
 
 # ---------------------------------------------------------------------------
+# STRATEGY — probability/sizing tunables for the systematic brain + exit monitor.
+# These are strategy knobs, distinct from the hard USD caps in `risk:` above.
+# Calibrate the longshot discounts against historical resolution data before
+# widening. Omitting a key falls back to the conservative defaults in code.
+# ---------------------------------------------------------------------------
+strategy:
+  bankroll_usd: 100.0            # capital base for Kelly sizing
+  max_kelly: 0.25                # quarter-Kelly cap
+  max_risk_per_position: 0.01    # hard cap: 1% of bankroll per position
+  min_confidence: 0.60           # skip proposals below this
+  max_theses: 10                 # cap simultaneous proposals per cycle
+  # Exit triggers (monitor)
+  target_fraction: 0.15          # close when bid <= 15% of entry price
+  near_expiry_hours: 2.0         # close when < 2h to resolution
+  stale_hours: 24.0              # consider stale after 24h held
+  stale_move_pct: 0.02           # ...if price moved < 2%
+
+# ---------------------------------------------------------------------------
 # RUNTIME
 # ---------------------------------------------------------------------------
 runtime:
   request_timeout_s: 15
   # client-side throttle to stay under Basic tier (~10 auth req/s)
   max_requests_per_second: 8
+  # set false when behind a corporate proxy that re-signs TLS (e.g. PEAK6)
+  verify_ssl: false

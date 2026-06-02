@@ -58,7 +58,10 @@ class KalshiClient:
         self.base_url = config.secrets.kalshi_api_base.rstrip("/")
         self._limiter = RateLimiter(config.runtime.max_requests_per_second)
         self._max_retries = max_retries
-        self._http = httpx.Client(timeout=config.runtime.request_timeout_s)
+        self._http = httpx.Client(
+            timeout=config.runtime.request_timeout_s,
+            verify=config.runtime.verify_ssl,
+        )
 
         self._signer: Optional[KalshiSigner] = None
         if config.secrets.kalshi_api_key_id and config.secrets.kalshi_private_key_path:

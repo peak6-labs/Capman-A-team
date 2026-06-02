@@ -1,38 +1,24 @@
 # Capman-A-Team
 
-Kalshi demo bot that scans cheap-tail markets, scores candidates, generates sell
-theses, executes approved orders, and monitors open positions.
+Hybrid Kalshi trading system. **All canonical code lives in
+[`kalshi-agent-trader/`](kalshi-agent-trader/)** — a deterministic systematic core
+for execution/risk with LLM agents generating signals. Agents propose; deterministic
+gates (compliance → risk) dispose.
 
-## Setup
-
-1. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Copy `config.example.py` to `config.py` or set environment variables:
-
-   ```bash
-   export KALSHI_ACCESS_KEY="..."
-   export KALSHI_PRIVATE_KEY_FILE="/path/to/key.txt"
-   ```
-
-3. Keep live trading disabled unless you explicitly intend to place orders.
-
-## Running
-
-Dry run, which scans and prints intended orders without placing them:
+## Quickstart
 
 ```bash
-./startup.sh
+cd kalshi-agent-trader
+uv sync                      # install deps
+cp .env.example .env         # fill in KALSHI_API_KEY_ID, KALSHI_PRIVATE_KEY_PATH, ANTHROPIC_API_KEY
+uv run kalshi-trader status  # verify
 ```
 
-Live mode requires both the startup flag and `LIVE_TRADING=true`:
+See the package [README](kalshi-agent-trader/README.md) for the full CLI, the
+compliance model, and verified Kalshi API notes. Strategy rationale and the edge
+analysis live in [`docs/EDGES.md`](kalshi-agent-trader/docs/EDGES.md).
 
-```bash
-LIVE_TRADING=true ./startup.sh --live
-```
-
-`KALSHI_VERIFY_SSL=false` is available for demo-environment certificate issues,
-but leave verification enabled for production.
+> An earlier flat prototype (`scanner.py`, `brain.py`, `executor.py`, …) once lived
+> at the repo root. It was fully superseded by the package — which adds the
+> compliance/risk gates, V2 orders, a SQLite journal, and tests — and has been
+> removed. It remains in git history if you need it.
