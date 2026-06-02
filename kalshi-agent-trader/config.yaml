@@ -1,0 +1,59 @@
+# Kalshi agent-trader configuration.
+# Secrets live in .env, NOT here. This file holds risk limits + compliance + tunables.
+# Everything here is enforced in deterministic code (compliance.py / risk.py).
+
+# ---------------------------------------------------------------------------
+# COMPLIANCE — PEAK6 hard constraints. Enforced before any risk check and NOT
+# overridable by agents. See README "Compliance".
+# ---------------------------------------------------------------------------
+compliance:
+  # A market may trade ONLY if its event category is in allowed_categories
+  # AND not in prohibited_categories AND passes the keyword screen.
+  # Categories are resolved market -> event -> category (category is on the event).
+  allowed_categories:
+    - Politics
+    - World
+    - Climate and Weather
+    - Sports
+  prohibited_categories:   # hard deny — PEAK6: equities/ETFs/indices/options/companies/finance
+    - Financials
+    - Companies
+    - Crypto
+    - Economics
+  # Default-deny everything else (Elections, Science and Technology, Entertainment,
+  # Social, Health, Transportation) unless explicitly added to allowed_categories.
+  default_deny_unknown: true
+  # Keyword backstop on market/event title + series (case-insensitive substring).
+  # Catches a prohibited market that slips into an allowed category.
+  prohibited_keywords:
+    - earnings
+    - ipo
+    - " s&p"
+    - nasdaq
+    - dow jones
+    - merger
+    - acquisition
+    - stock
+    - share price
+    - "etf"
+
+# ---------------------------------------------------------------------------
+# RISK — configurable caps. FILL THESE IN before going live. Exposure is also
+# bounded by actual account balance regardless of these values (no leverage).
+# ---------------------------------------------------------------------------
+risk:
+  dry_run: true                  # true = log intended orders, place nothing
+  max_total_exposure_usd: 0.0    # TODO set <= deposited Project Bonus funds
+  max_per_position_usd: 0.0      # TODO
+  max_contracts_per_order: 0     # TODO
+  daily_loss_cap_usd: 0.0        # TODO halts new entries when breached for the day
+  min_confidence: 0.0            # TODO min agent confidence [0..1] to act
+  min_edge: 0.0                  # TODO min |fair_prob - price| edge to act
+
+# ---------------------------------------------------------------------------
+# RUNTIME
+# ---------------------------------------------------------------------------
+runtime:
+  request_timeout_s: 15
+  # client-side throttle to stay under Basic tier (~10 auth req/s)
+  max_requests_per_second: 8
