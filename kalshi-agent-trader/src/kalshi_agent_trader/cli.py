@@ -36,6 +36,8 @@ from .risk import KILL_SWITCH_PATH, ProposedOrder, RiskGate
 from .tennis_screen import fetch_universe, rows_from_universe
 from . import pipeline as _strategy
 from .agents.agent_strategy import run_agent_strategy as _run_agent_strategy
+from .strategies.dip_reversion import runner as _dip_runner
+from .strategies.dip_reversion.detector import DipParams
 
 app = typer.Typer(add_completion=False, help="Kalshi agent-trader CLI")
 console = Console()
@@ -485,6 +487,50 @@ def breakeven(
                     time.sleep(interval)
             except KeyboardInterrupt:
                 console.print("[dim]stopped.[/dim]")
+
+
+@app.command()
+def dip(
+    player: Optional[List[str]] = typer.Option(
+        None, "--player", "-p", help="Player name substring(s); repeatable. Omit for all."),
+    gender: str = typer.Option("both", help="men | women | both"),
+    bankroll: float = typer.Option(500.0, help="Bankroll for Kelly sizing (your real account size)."),
+    kelly: float = typer.Option(0.5, help="Kelly fraction (moderate = 0.5)."),
+    p_revert: float = typer.Option(
+        0.70, help="Conviction the dislocation reverts (EV/Kelly gate). UNCALIBRATED."),
+    stop_loss: float = typer.Option(
+        0.06, help="¢/contract you'll risk before cutting (caps loss; tighter ⇒ bigger size)."),
+    threshold: float = typer.Option(
+        0.05, help="Min over-reaction to BUY: title this far below match-implied fair."),
+    recover_floor: float = typer.Option(
+        0.35, help="STOP if match-win mid falls below this (the deficit is real)."),
+    exit_band: float = typer.Option(0.02, help="Within this of fair = reverted (take profit)."),
+    min_match_anchor: float = typer.Option(
+        0.50, help="Only anchor players who started the match a favourite (match mid ≥ this)."),
+    fee_rate: float = typer.Option(0.07, help="Kalshi fee coefficient (round-trip is modelled)."),
+    interval: int = typer.Option(15, "--interval", "-i", help="Poll seconds (loop mode)."),
+    once: bool = typer.Option(False, "--once", help="Single snapshot, no loop."),
+    execute: bool = typer.Option(
+        False, "--execute",
+        help="Route signals through the order pipeline (maker entry, sell-to-exit). "
+             "Honors config dry_run — places orders only when dry_run is false."),
+) -> None:
+    """Live intraday detector + sizing: buy title dips that over-shoot the match move.
+
+    Anchors each favourite's title/match ratio (C = P(title | advances)) and buys
+    when the title falls ≥ `threshold` below the match-implied fair (C·match_yes),
+    sizing a φ-scaled fractional-Kelly stake. Alerts only unless `--execute`; start
+    it *before/early* in a match so the anchor captures the pre-dip level.
+    """
+    params = DipParams(
+        bankroll=Decimal(str(bankroll)), kelly_fraction=Decimal(str(kelly)),
+        p_revert=Decimal(str(p_revert)), stop_loss=Decimal(str(stop_loss)),
+        residual_threshold=Decimal(str(threshold)),
+        recover_floor=Decimal(str(recover_floor)), exit_band=Decimal(str(exit_band)),
+        min_match_anchor=Decimal(str(min_match_anchor)), fee_rate=Decimal(str(fee_rate)),
+    )
+    _dip_runner.run(params, gender=gender, players=player or None,
+                    interval=interval, once=once, execute=execute)
 
 
 if __name__ == "__main__":
