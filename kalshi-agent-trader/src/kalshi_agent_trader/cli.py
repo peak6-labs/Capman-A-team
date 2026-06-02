@@ -38,6 +38,8 @@ from . import pipeline as _strategy
 from .agents.agent_strategy import run_agent_strategy as _run_agent_strategy
 from .strategies.dip_reversion import runner as _dip_runner
 from .strategies.dip_reversion.detector import DipParams
+from .strategies.three_leg import runner as _three_leg_runner
+from .strategies.three_leg.screen import ThreeLegParams
 
 app = typer.Typer(add_completion=False, help="Kalshi agent-trader CLI")
 console = Console()
@@ -531,6 +533,42 @@ def dip(
     )
     _dip_runner.run(params, gender=gender, players=player or None,
                     interval=interval, once=once, execute=execute)
+
+
+@app.command(name="three-leg")
+def three_leg(
+    gender: str = typer.Option("both", help="men | women | both"),
+    player: Optional[List[str]] = typer.Option(
+        None, "--player", "-p", help="Player name substring(s); repeatable."),
+    bankroll: float = typer.Option(100.0, help="Bankroll for Kelly sizing."),
+    kelly: float = typer.Option(0.5, help="Kelly fraction (0.5 = half-Kelly)."),
+    fatigue_coef: float = typer.Option(
+        0.20, help="Pts added to a long-win leg's fair per extra-set, per rest-day."),
+    rest_days: int = typer.Option(
+        1, help="QF→SF turnaround in days; fewer ⇒ bigger length hedge."),
+    match_edge: float = typer.Option(
+        0.0, help="Your edge over the de-vigged match fair (0 ⇒ no match leg)."),
+    title_edge: float = typer.Option(
+        0.0, help="Your edge over the title YES mid (0 ⇒ no title leg)."),
+    execute: bool = typer.Option(
+        False, "--execute",
+        help="Route sized legs through compliance→risk (places orders only when "
+             "config dry_run is false)."),
+) -> None:
+    """Back each QF favourite (match + title) and hedge their win-LENGTH for SF fatigue.
+
+    Three Kelly-sized YES legs per favourite: match, title, and 'wins but long'
+    (men 3-1/3-2, women 2-1). The length hedge is upsized as the QF→SF turnaround
+    shrinks — φ = fatigue_coef·extra_sets/rest_days is added to its fair. Legs 1-2
+    size 0 at market unless you supply --match-edge/--title-edge. Screen-only unless
+    --execute (which honors config dry_run).
+    """
+    params = ThreeLegParams(
+        bankroll=Decimal(str(bankroll)), kelly_fraction=Decimal(str(kelly)),
+        fatigue_coef=Decimal(str(fatigue_coef)), rest_days=rest_days,
+        match_edge=Decimal(str(match_edge)), title_edge=Decimal(str(title_edge)),
+    )
+    _three_leg_runner.run(params, gender=gender, players=player or None, execute=execute)
 
 
 @app.command()
