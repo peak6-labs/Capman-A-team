@@ -1,10 +1,15 @@
-"""Simple Kalshi (demo) strategy: sell the cheap tail.
+"""Standalone Kalshi scanner/seller: sell the cheap tail.
+
+Lightweight single-file tool for quick ad-hoc runs. The primary pipeline is
+startup.sh (scanner → brain → executor → exit_monitor), which adds volume and
+spread filters, Kelly sizing, position tracking, and automated exits. Use this
+module only when you want a simple one-shot scan without the full pipeline.
 
 Find open markets where one side trades below a probability threshold (default
-5%) *and* has a real bid we can sell into, then sell that side to collect the
-small premium.
+10%, matching scanner.py's MAX_PRICE) *and* has a real bid we can sell into,
+then sell that side to collect the small premium.
 
-Note on the edge: selling a sub-5% side immediately costs ~(1 - price) in
+Note on the edge: selling a sub-10¢ side immediately costs ~(1 - price) in
 capital and pays back $1 only if it resolves your way -- it's tail-risk selling,
 a high hit rate of small wins paid for by rare large losses. Size accordingly.
 """
@@ -14,7 +19,7 @@ import uuid
 
 from client import markets, portfolio
 
-PROBABILITY_THRESHOLD = 0.05
+PROBABILITY_THRESHOLD = 0.10  # matches scanner.py MAX_PRICE
 
 
 def _to_float(value):
@@ -27,10 +32,13 @@ def _to_float(value):
 def scan_low_probability_markets(threshold=PROBABILITY_THRESHOLD, max_pages=20):
     """Return open markets where one side is cheap enough to sell.
 
-    A side qualifies only if it has a *positive* bid strictly below `threshold`
-    (price in dollars, 0-1). The positive-bid requirement matters: most demo
-    markets have empty books (yes 0.00 / no 1.00), which look like extreme
-    probabilities but cannot actually be sold into.
+    A side qualifies only if it has a bid >= $0.01 and strictly below
+    `threshold` (default 10¢, matching scanner.py). The 1¢ floor matters:
+    most demo markets have empty books (yes $0.00 / no $1.00), which look
+    like extreme probabilities but cannot actually be sold into.
+
+    Note: unlike scanner.py this function does not filter by volume, spread,
+    or time-to-expiry. For production runs use the full pipeline (startup.sh).
 
     Prices come from the demo API's `*_dollars` fields, which the SDK's typed
     Market model drops -- so we read the raw JSON through the SDK's
@@ -49,8 +57,9 @@ def scan_low_probability_markets(threshold=PROBABILITY_THRESHOLD, max_pages=20):
         for market in data.get("markets", []):
             yes_bid = _to_float(market.get("yes_bid_dollars"))
             no_bid = _to_float(market.get("no_bid_dollars"))
-            yes_ok = yes_bid is not None and 0 < yes_bid < threshold
-            no_ok = no_bid is not None and 0 < no_bid < threshold
+            # Also require at least 1 cent so round(price*100) >= 1 for the order.
+            yes_ok = yes_bid is not None and 0.01 <= yes_bid < threshold
+            no_ok = no_bid is not None and 0.01 <= no_bid < threshold
             # If both qualify (very wide book), sell whichever is cheaper.
             if yes_ok and (not no_ok or yes_bid <= no_bid):
                 side, price = "yes", yes_bid
