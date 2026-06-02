@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 from kalshi_agent_trader.models import Market
 from kalshi_agent_trader.strategies.three_leg import compute, length
+from kalshi_agent_trader.strategies.three_leg.orders import proposed_orders
 from kalshi_agent_trader.strategies.three_leg.screen import ThreeLegParams, build_plans
 
 D = Decimal
@@ -170,3 +171,37 @@ def test_net_pnl_outcomes():
     expected = D(p.match_leg.contracts) + win32.leg3_pay - p.total_cost
     assert p.net_pnl(win32, title_win=False) == expected
     assert p.net_pnl(win32, title_win=True) == expected + D(p.title_leg.contracts)
+
+
+def _wmatch(cid, name, yes_bid, yes_ask, event="KXWTAMATCH-26JUN03SABSHN"):
+    return Market(
+        ticker=f"{event}-{cid}", event_ticker=event, status="open",
+        yes_sub_title=name, custom_strike={"tennis_competitor": cid},
+        yes_bid_dollars=yes_bid, yes_ask_dollars=yes_ask,
+        no_bid_dollars="0.0", no_ask_dollars="1.0",
+    )
+
+
+def test_pending_hedge_trades_legs_1_2_without_length_market():
+    """Women's QF with no exact-score market: legs 1-2 trade now, hedge is pending."""
+    fav = _wmatch("w1", "Aryna Sabalenka", "0.86", "0.88")
+    opp = _wmatch("w2", "Diana Shnaider", "0.12", "0.14")
+    title = Market(
+        ticker="KXFOWOMEN-26-w1", event_ticker="KXFOWOMEN-26", status="open",
+        yes_sub_title="Aryna Sabalenka", custom_strike={"tennis_competitor": "w1"},
+        yes_bid_dollars="0.54", yes_ask_dollars="0.58")
+    md = FakeMD(
+        by_series={"KXWTAMATCH": [fav, opp], "KXFOWOMEN": [title],
+                   "KXATPMATCH": [], "KXFOMEN": []},
+        by_event={},  # no exact-score event listed yet
+    )
+    params = ThreeLegParams(match_edge=D("0.04"), title_edge=D("0.02"))
+    plans = build_plans(md, gender="women", players=None, params=params)
+    assert len(plans) == 1
+    p = plans[0]
+    assert p.name == "Aryna Sabalenka" and p.long_legs == []
+    assert p.hedge_pending is True
+    assert p.pending_hedge_event == "KXWTAEXACTMATCH-26JUN03SABSHN"
+    # Legs 1-2 still trade now (hedge deferred until its market lists):
+    tickers = [o.ticker for o in proposed_orders(p)]
+    assert any("KXWTAMATCH" in t for t in tickers)

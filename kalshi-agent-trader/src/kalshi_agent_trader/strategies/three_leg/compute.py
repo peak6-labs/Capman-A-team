@@ -125,6 +125,12 @@ class ThreeLegPlan:
     long_legs: List[Leg] = field(default_factory=list)
     outcomes: List[Outcome] = field(default_factory=list)
     note: str = ""
+    pending_hedge_event: Optional[str] = None   # exact-score event to hedge with once it lists
+
+    @property
+    def hedge_pending(self) -> bool:
+        """Legs 1-2 are tradeable now, but the length hedge market isn't live yet."""
+        return bool(self.pending_hedge_event) and not self.long_legs
 
     @property
     def total_cost(self) -> Decimal:

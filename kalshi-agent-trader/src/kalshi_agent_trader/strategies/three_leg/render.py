@@ -60,10 +60,14 @@ def _plan_panel(plan: ThreeLegPlan, params: ThreeLegParams) -> Panel:
         ev = plan.expected_value(p_title_given_advance=p_cond)
         ev_line = f"  EV ≈ {_fmt_signed_money(ev)} • cost {_fmt_money(plan.total_cost)}"
 
-    note = f" [yellow]({plan.note})[/yellow]" if plan.note else ""
     hedge = sum((leg.cost for leg in plan.long_legs), D("0"))
-    title = f"[bold]{plan.name}[/bold] · {g} · rest {plan.rest_days}d · " \
-            f"hedge {_fmt_money(hedge)}{note}"
+    if plan.hedge_pending:
+        hedge_str = f"[yellow]hedge PENDING → re-run when {plan.pending_hedge_event} lists[/yellow]"
+    elif plan.note:
+        hedge_str = f"hedge {_fmt_money(hedge)} [yellow]({plan.note})[/yellow]"
+    else:
+        hedge_str = f"hedge {_fmt_money(hedge)}"
+    title = f"[bold]{plan.name}[/bold] · {g} · rest {plan.rest_days}d · {hedge_str}"
     return Panel(Group(legs_tbl, pnl, ev_line) if ev_line else Group(legs_tbl, pnl),
                  title=title, title_align="left", border_style="dim")
 

@@ -148,7 +148,8 @@ def _plan_for(
                 sets_lost=c.sets_lost, leg3_pay=leg3_contracts,
             ))
     else:
-        # No length market: a single generic win outcome; plan degrades to two legs.
+        # No length market yet: trade legs 1-2 now, flag the hedge as pending so it
+        # can be added when the exact-score market lists (re-run at match-live time).
         outcomes.append(Outcome(
             label="wins QF", prob=match_fair, is_win=True, sets_lost=0))
 
@@ -156,4 +157,5 @@ def _plan_for(
         name=name, gender=gender, rest_days=params.rest_days,
         match_leg=match_leg, title_leg=title_leg, long_legs=long_legs,
         outcomes=outcomes, note=note,
+        pending_hedge_event=(length.exact_event_for(fav) if not long_legs else None),
     )

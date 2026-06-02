@@ -50,6 +50,10 @@ def run(
                 client, ComplianceGate(cfg.compliance), RiskGate(cfg.risk), journal,
                 dry_run=cfg.risk.dry_run)
             for plan in plans:
+                if plan.hedge_pending:
+                    log.append(
+                        f"[yellow]PENDING[/yellow] {plan.name}: length hedge deferred — "
+                        f"re-run when {plan.pending_hedge_event} lists")
                 for order in proposed_orders(plan):
                     if order.ticker not in cat_cache:
                         m = md.get_market(order.ticker)
