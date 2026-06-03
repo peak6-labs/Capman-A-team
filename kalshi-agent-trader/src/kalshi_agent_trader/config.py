@@ -123,6 +123,10 @@ class ThreeLegConfig(BaseModel):
     fatigue_coef: Decimal = Decimal("0.20")
     fee_rate: Decimal = Decimal("0.07")
     rest_days: int = 1
+    # Directional alpha (added to the de-vigged market fair). Legs size to 0 at
+    # market, so a positive edge here is what makes the strategy actually trade.
+    match_edge: Decimal = Decimal("0")
+    title_edge: Decimal = Decimal("0")
     # Executor staleness / drift guards (the trade-ticket contract).
     ticket_max_age_min: int = 30
     drift_tolerance_match: Decimal = Decimal("0.02")
@@ -130,6 +134,7 @@ class ThreeLegConfig(BaseModel):
 
     @field_validator(
         "bankroll_usd", "kelly_fraction", "fatigue_coef", "fee_rate",
+        "match_edge", "title_edge",
         "drift_tolerance_match", "drift_tolerance_title", mode="before",
     )
     @classmethod

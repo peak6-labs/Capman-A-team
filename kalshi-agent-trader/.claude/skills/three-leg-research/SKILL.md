@@ -27,77 +27,71 @@ turnaround-weighted fraction ρ of the title position, so **no title ⇒ no hedg
 > candidate snapshot; don't pre-load all markets or events. Use web search only after you
 > have the player's name and QF date in hand.
 
-1. **Snapshot the live book (read-only).**
+The structure (legs on DIFFERENT players): **Leg 1** = M wins the match · **Leg 2** = T (the
+other player) wins the tournament · **Leg 3** = T wins the match in 5 sets (the OUT). The worry
+case is T beating M but not winning the title — both directional legs die; Leg 3 pays only there.
+Your job is to **pick the side** (who is M vs T) and confirm the legs.
+
+1. **Pick the side (model-driven).** For the A-vs-B matchup, get the model's title read and
+   both orientations:
    ```bash
-   kalshi-trader three-leg --json                       # all QFs, both genders
-   kalshi-trader three-leg --json --player "Sabalenka"  # one candidate
+   kalshi-trader simulate --json --gender men             # model P(title) per player vs market + Polymarket
+   kalshi-trader three-leg --json --match-on favorite --player "<A>"
+   kalshi-trader three-leg --json --match-on underdog --player "<A>"
    ```
-   Parse the JSON: per plan you get `legs` (ask, market_fair, fair, contracts, cost),
-   `outcomes` (prob, net_if_no_title, net_if_wins_title), `total_cost_usd`, `ev_usd`,
-   `hedge_pending`. This is your evidence — quote numbers from it, don't eyeball a table.
+   Back for the **TITLE** (Leg 2) whichever player the model flags as most **underpriced** to
+   win the event (model P(title) > market, ideally corroborated by Polymarket); back the
+   **OTHER** player in the **MATCH** (Leg 1). Choose `--match-on favorite` or `--match-on
+   underdog` accordingly. ⚠️ The sim's title edge is **unvalidated** (it did not pass the
+   convergence test) — treat it as a judgment input, not proven alpha; say so in the ticket.
 
-2. **Get the real turnaround.** The default `rest_days` is 1. Web-search the *current* RG
-   schedule for this player's QF date and their SF date; set `--rest-days` to the actual
-   gap. Fewer rest days ⇒ a larger, more justified hedge. (Historically: men's SF later
-   than women's, so men often get a 2-day turnaround, women 1-day.)
+2. **Get the real turnaround.** Default `rest_days` is 1. Web-search the *current* RG schedule
+   for the match date and the title player's SF date; set `--rest-days` to the actual gap.
 
-3. **Run the edge-confirmation checklist.** Each is a gate; a GO must pass all that apply:
-   - [ ] **Match leg.** Is the de-vigged match `fair` materially above the `ask`? If you're
-         only matching the market mid (edge 0), Leg 1 sizes to 0 — that is fine and honest.
-         Do **not** fabricate an edge to force a position.
-   - [ ] **Title leg & favourite-longshot bias.** Buying a cheap longshot title (e.g. a
-         sub-10¢ title) is the WRONG side of the bias and is −EV. A title leg is defensible
-         only for a genuine favourite-priced contender you think the market *underrates*.
-   - [ ] **One champion.** Title legs across players are mutually exclusive ⇒ **≤ 1 title
-         anchor per tournament.** Pick the single best anchor; don't stack title YES across
-         players.
-   - [ ] **Hedge sanity.** ρ = clamp(fatigue_coef·extra_sets/rest_days, 0, 1). Confirm the
-         hedge market is live (`hedge_pending: false`); if pending, the ticket notes it and
-         the executor must re-run when it lists. Remember the hedge is −EV insurance — it
-         must be small relative to the title it protects, never a standalone duration bet.
-   - [ ] **EV.** Read `ev_usd` (computed at the market-implied conditional title prob). If
-         it isn't positive *after fees* under disciplined ½-Kelly, the verdict is NO-GO.
+3. **Confirm the legs (each is a gate):**
+   - [ ] **Match leg (M).** Edge over the de-vigged match `fair`? Edge 0 ⇒ Leg 1 sizes to 0,
+         which is fine — don't fabricate an edge.
+   - [ ] **Title leg (T).** Is the model's title edge real and the price defensible? **≤ 1
+         title anchor per tournament** (titles are mutually exclusive).
+   - [ ] **The out (Leg 3).** T wins in 5 — it pays ONLY in the worry case (T beats M, no
+         title). It is a left-tail **out**, NOT alpha: judge it by how much it lifts the worst
+         case, not by EV/edge. Confirm `hedge_pending: false` (else note it and the executor
+         re-runs when the 5-set market lists).
+   - [ ] **EV.** Read `ev_usd`. For a demo it may be negative — report it honestly; the value
+         here is the payoff shape, not a proven edge.
 
-4. **Decide and size.** If GO, choose the leg edges that express your thesis
-   (`--match-edge`, `--title-edge`) and re-run `--json` to capture the sized plan. Keep
-   ≤ 1 title anchor. If nothing clears, write a NO-GO ticket explaining what you checked.
+4. **Decide and size.** Express your thesis via `--match-edge` / `--title-edge` and the chosen
+   `--match-on`; re-run `--json` to capture the sized plan.
 
-5. **Write the ticket.** Save to `research/tickets/<YYYY-MM-DD>-<player>.md` using the
-   template in `research/tickets/TEMPLATE.md`. Fill in the legs, EV-by-outcome, the edge
-   claim (or why there isn't one), and copy the drift/staleness guards from `config.yaml`
-   `three_leg:` (`ticket_max_age_min`, `drift_tolerance_match/title`) into the frontmatter.
+5. **Write the ticket.** Save to `research/tickets/<YYYY-MM-DD>-<player>.md` per
+   `research/tickets/TEMPLATE.md`. Record **which player is M (match) vs T (title) and the
+   `match_on` orientation**, the legs, EV-by-outcome, the edge claim (or why there isn't one),
+   and copy the drift/staleness guards from `config.yaml` `three_leg:` into the frontmatter.
 
 ## Output
 A short written verdict to the user — GO or NO-GO, the candidate, the one-line edge claim
 (or "flat, as priors predicted"), and the ticket path. If GO, tell them they can hand the
 ticket to the **executor** agent. Never place anything yourself.
 
-## Canonical examples
+## Canonical example (legs on DIFFERENT players)
 
-**GO — Swiatek, RG 2026 QF (1-day turnaround)**
+**A = Alcaraz (match favourite), B = Sinner (opponent). Model says Sinner's TITLE is underpriced.**
+Side chosen: back **Alcaraz to win the match** (Leg 1) + **Sinner to win the title** (Leg 2,
+`--match-on favorite`), out = **Sinner wins in 5** (Leg 3).
 ```
-Leg 1  SWIATEK-26-QF-YES   ask $0.71  fair $0.76  edge +0.05  7 contracts  cost $4.97
-Leg 2  SWIATEK-TITLE-YES   ask $0.38  fair $0.44  edge +0.06  3 contracts  cost $1.14
-Leg 3  OPPONENT-SET-YES    ask $0.29  ρ=0.20      hedge       2 contracts  cost $0.58
+Leg 1  ALCARAZ-MATCH-YES        ask $0.62  back A to win today
+Leg 2  SINNER-TITLE-YES         ask $0.18  model P(title) 0.26 > market 0.18 (Poly 0.24) — the edge
+Leg 3  SINNER-WINS-3-2-YES      ask $0.14  the OUT — pays iff Sinner beats Alcaraz in 5
 
-EV by outcome:
-  wins straight (prob 0.61):  +$1.73
-  wins long     (prob 0.14):  +$0.95
-  loses         (prob 0.25):  −$6.69
-ev_usd: +$0.38  (after 7% fees, half-Kelly)
+Scenario shape:
+  Alcaraz wins the match              → Leg 1 pays; B-title + out die
+  Sinner wins, then wins the title    → Leg 2 pays big
+  Sinner wins in ≤4, no title (worry) → all directional legs die, out doesn't fire
+  Sinner wins in 5,  no title (worry) → the OUT fires, cushioning the grind
 
-Verdict: GO — market underprices Swiatek's title given confirmed 5¢ match edge and
-1-day QF→SF turnaround. Ticket: research/tickets/2026-06-03-swiatek.md
+Verdict: GO — model + Polymarket both flag Sinner's title as underpriced; back him for the
+title, Alcaraz for the match, Sinner-in-5 as the out. (Edge is a model read, NOT validated.)
 ```
 
-**NO-GO — Zverev, RG 2026 QF**
-```
-Leg 1  ZVEREV-26-QF-YES    ask $0.62  fair $0.63  edge +0.01  0 contracts  (no edge)
-Leg 2  ZVEREV-TITLE-YES    ask $0.08  fair $0.06  edge −0.02  0 contracts  (wrong side FSB)
-Leg 3  (no title position → no hedge)
-
-ev_usd: $0.00
-
-Verdict: NO-GO — no match edge; title ask is on the wrong side of the favourite-longshot
-bias (market overprices a sub-10¢ longshot). Flat, as priors predicted.
-```
+**NO-GO** — neither orientation gives a defensible title edge (model ≈ market on both players),
+and no match edge ⇒ legs size to 0. Write NO-GO: "flat, as priors predicted."

@@ -9,6 +9,7 @@ config `dry_run`. Retired exploratory commands live under `attic/`.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional
 
 import typer
@@ -240,16 +241,19 @@ def three_leg(
     gender: str = typer.Option("both", help="men | women | both"),
     player: Optional[List[str]] = typer.Option(
         None, "--player", "-p", help="Player name substring(s); repeatable."),
-    bankroll: float = typer.Option(100.0, help="Bankroll for Kelly sizing."),
-    kelly: float = typer.Option(0.5, help="Kelly fraction (0.5 = half-Kelly)."),
-    fatigue_coef: float = typer.Option(
-        0.20, help="Pts added to a long-win leg's fair per extra-set, per rest-day."),
-    rest_days: int = typer.Option(
-        1, help="QF→SF turnaround in days; fewer ⇒ bigger length hedge."),
-    match_edge: float = typer.Option(
-        0.0, help="Your edge over the de-vigged match fair (0 ⇒ no match leg)."),
-    title_edge: float = typer.Option(
-        0.0, help="Your edge over the title YES mid (0 ⇒ no title leg)."),
+    bankroll: Optional[float] = typer.Option(None, help="Bankroll for Kelly sizing. [config three_leg.bankroll_usd]"),
+    kelly: Optional[float] = typer.Option(None, help="Kelly fraction. [config three_leg.kelly_fraction]"),
+    fatigue_coef: Optional[float] = typer.Option(
+        None, help="Pts added to a long-win leg's fair per extra-set, per rest-day. [config]"),
+    rest_days: Optional[int] = typer.Option(
+        None, help="QF→SF turnaround in days; fewer ⇒ bigger length hedge. [config]"),
+    match_edge: Optional[float] = typer.Option(
+        None, help="Alpha over the de-vigged match fair (0 ⇒ no match leg). [config three_leg.match_edge]"),
+    title_edge: Optional[float] = typer.Option(
+        None, help="Alpha over the title YES mid (0 ⇒ no title leg). [config three_leg.title_edge]"),
+    match_on: str = typer.Option(
+        "favorite", "--match-on",
+        help="favorite | underdog — which player anchors the MATCH leg (the other gets title + out)."),
     json_out: bool = typer.Option(
         False, "--json", help="Emit a structured JSON snapshot (for the research agent)."),
     execute: bool = typer.Option(
@@ -262,17 +266,25 @@ def three_leg(
     Three Kelly-sized YES legs per favourite: match, title, and 'wins but long'
     (men 3-1/3-2, women 2-1). The length hedge is upsized as the QF→SF turnaround
     shrinks — φ = fatigue_coef·extra_sets/rest_days is added to its fair. Legs 1-2
-    size 0 at market unless you supply --match-edge/--title-edge. Screen-only unless
-    --execute (which honors config dry_run). `--json` prints a machine-readable
-    snapshot instead of the table and skips execution.
+    size 0 at market unless an edge is supplied — flags default to the `three_leg:`
+    section of config.yaml, overridable per-run here. Screen-only unless --execute
+    (which honors config dry_run). `--json` prints a machine-readable snapshot.
     """
+    if match_on not in ("favorite", "underdog"):
+        raise typer.BadParameter("match-on must be favorite or underdog")
+    tl = load_config().three_leg
     params = ThreeLegParams(
-        bankroll=Decimal(str(bankroll)), kelly_fraction=Decimal(str(kelly)),
-        fatigue_coef=Decimal(str(fatigue_coef)), rest_days=rest_days,
-        match_edge=Decimal(str(match_edge)), title_edge=Decimal(str(title_edge)),
+        bankroll=Decimal(str(bankroll)) if bankroll is not None else tl.bankroll_usd,
+        kelly_fraction=Decimal(str(kelly)) if kelly is not None else tl.kelly_fraction,
+        fatigue_coef=Decimal(str(fatigue_coef)) if fatigue_coef is not None else tl.fatigue_coef,
+        rest_days=rest_days if rest_days is not None else tl.rest_days,
+        match_edge=Decimal(str(match_edge)) if match_edge is not None else tl.match_edge,
+        title_edge=Decimal(str(title_edge)) if title_edge is not None else tl.title_edge,
+        fee_rate=tl.fee_rate,
     )
     _three_leg_runner.run(
-        params, gender=gender, players=player or None, execute=execute, json_out=json_out)
+        params, gender=gender, players=player or None, execute=execute,
+        json_out=json_out, orientation=match_on)
 
 
 @app.command()
@@ -321,6 +333,51 @@ def calibrate() -> None:
         f"[dim]skipped — unsettled: {report.skipped_unsettled}, "
         f"no prediction: {report.skipped_no_prediction}[/dim]"
     )
+
+
+@app.command()
+def simulate(
+    gender: str = typer.Option("both", help="men | women | both"),
+    n: int = typer.Option(100_000, help="Monte-Carlo trials."),
+    seed: int = typer.Option(7, help="RNG seed (reproducible)."),
+    json_out: bool = typer.Option(False, "--json", help="Machine-readable snapshot for the research agent."),
+    poly: bool = typer.Option(True, "--poly/--no-poly", help="Attach a Polymarket title reference per player."),
+) -> None:
+    """Bracket Monte-Carlo title/final/SF fair value vs. live Kalshi + Polymarket.
+
+    Ratings are clay Elo (ratings/clay_elo.yaml), calibrated to the live match
+    markets so the sim reproduces today's matchups; divergences on the derived
+    winner/reach markets are bracket-math inconsistencies, not match disagreements.
+    The draw is declarative (draws/*.yaml) and anchors are discovered live. Edges
+    on the tight WIN market are actionable; wide FINAL/SF quotes are flagged.
+    green/red = model cheaper/richer than market by >=4 pts.
+    """
+    if gender not in ("men", "women", "both"):
+        raise typer.BadParameter("gender must be men, women, or both")
+    from . import sim_screen
+    sim_screen.run(gender=gender, n=n, seed=seed, json_out=json_out, use_poly=poly)
+
+
+@app.command(name="convergence-backtest")
+def convergence_backtest_cmd(
+    candles_dir: str = typer.Option("data/dip_candles", help="Directory of candle JSON snapshots."),
+    threshold: float = typer.Option(0.03, help="Min |title - match-implied fair| to take a trade."),
+    horizon_min: int = typer.Option(60, help="Convergence horizon in minutes."),
+) -> None:
+    """VALIDATION: does an over-reacted title price converge to its match-implied fair?
+
+    Bracket-free, read-only study over the local candle history. Anchors each
+    player's title/match conditional at the start of a live match window, then
+    measures whether title divergences beyond the threshold revert over the
+    horizon — fee-aware. Reports convergence rate, win rate, and mean P&L; this is
+    weaker evidence (no bracket, tiny n) and a gate, not a green light to trade.
+    """
+    import json as _json
+    from . import convergence_backtest as cb
+
+    report = cb.run_backtest(
+        Path(candles_dir), threshold=threshold, horizon_s=horizon_min * 60)
+    console.print_json(_json.dumps(report.summary()))
 
 
 @app.command()

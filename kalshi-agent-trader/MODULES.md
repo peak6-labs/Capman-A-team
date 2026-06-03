@@ -25,6 +25,8 @@ uv run kalshi-trader <command>
 | `three-leg` | No* | Screen QF favourites for the three-leg hedge. `--json` = snapshot for the research agent; `--execute` routes legs through the gates (*auth only when actually executing) |
 | `hedge` | Yes | Post-fill: exit-vs-hedge for an open match position (places nothing) |
 | `calibrate` | Yes | Brier-score closed positions vs Kalshi settlement (read-only); feedback on probability calibration |
+| `simulate` | No | Bracket Monte-Carlo title/final/SF fair vs live Kalshi + Polymarket. `--json` = snapshot for the research agent. Draw/ratings are declarative data |
+| `convergence-backtest` | No | VALIDATION (read-only): does an over-reacted title price revert to its match-implied fair? Bracket-free study over the candle history |
 
 > Exploratory commands (`scan`, `run`, `rv-scan`, `rv-run`, `monitor`, `agent-scan`,
 > `agent-run`, `breakeven`, `dip`) were retired with their modules to `attic/`.
@@ -125,6 +127,16 @@ UUID; turnaround-weighted hedge), `length.py` (discover exact-score / set-winner
 legs), `orders.py` (plan → orders), `render.py` (Rich view + `build_three_leg_json`),
 `runner.py` (fetch → size → render/JSON → optional gated execute). Driven by the
 `three-leg` CLI command and the research/executor agents.
+
+**`simulate.py`** / **`sim_screen.py`** — bracket Monte-Carlo title-edge engine. `simulate.py`
+is pure: clay-Elo `match_prob`, `calibrate_ratings` (fit ratings to live match markets), and
+`simulate_draw` over a declarative bracket (`draws/*.yaml` + `ratings/clay_elo.yaml`).
+`sim_screen.py` is the live glue: discovers anchors via `tennis_screen`, runs the sim, diffs vs
+the winner/reach markets, attaches a Polymarket reference, renders + `--json`. **The title edge
+is unvalidated — see [docs/VALIDATION.md](docs/VALIDATION.md); not wired into sizing.**
+
+**`convergence_backtest.py`** — read-only validation harness (the `convergence-backtest` CLI):
+does a title over-reaction revert to its match-implied fair, fee-aware, over the candle history.
 
 **`tennis_screen.py`** / **`breakeven.py`** — shared tennis infra the three-leg screen
 depends on (series constants, competitor pairing, de-vig + breakeven fee math).

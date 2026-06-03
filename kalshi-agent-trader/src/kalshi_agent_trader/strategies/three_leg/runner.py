@@ -32,16 +32,18 @@ console = Console()
 
 def run(
     params: ThreeLegParams, *, gender: str, players: Optional[List[str]], execute: bool,
-    json_out: bool = False,
+    json_out: bool = False, orientation: str = "favorite",
 ) -> None:
     cfg = load_config()
     with KalshiClient(cfg) as client:
         md = MarketData(client)
-        plans = build_plans(md, gender=gender, players=players, params=params)
+        plans = build_plans(md, gender=gender, players=players, params=params,
+                            orientation=orientation)
 
         # Machine-readable snapshot for the research agent. JSON mode never executes.
         if json_out:
             snapshot = build_three_leg_json(plans, params)
+            snapshot["orientation"] = orientation     # which player anchors the match leg
             snapshot["taken_at"] = datetime.now().astimezone().isoformat()
             print(json.dumps(snapshot, indent=2))
             return

@@ -17,10 +17,12 @@ not re-derive the thesis or improvise sizing.
    - `verdict` is not `GO`;
    - now − `created` exceeds the staleness bound (`ticket_max_age_min`); or
    - any required leg is missing.
-2. **Freshness / drift check.** Take a fresh snapshot for that player:
+2. **Freshness / drift check.** Take a fresh snapshot for that player, **reproducing the
+   ticket's chosen side** (`--match-on` favorite/underdog from the ticket — get this right, or
+   you'll diff against the wrong orientation):
    ```bash
-   kalshi-trader three-leg --json --player "<name>" --rest-days <ticket value> \
-       --match-edge <ticket> --title-edge <ticket>
+   kalshi-trader three-leg --json --player "<name>" --match-on <ticket orientation> \
+       --rest-days <ticket value> --match-edge <ticket> --title-edge <ticket>
    ```
    Compare the live `ask` of the match and title legs to the ticket. If
    `|live_ask − ticket_ask|` exceeds `drift_tolerance_match` / `drift_tolerance_title`,
@@ -35,7 +37,7 @@ not re-derive the thesis or improvise sizing.
   this specific ticket** before placing; approval of a prior trade never carries over.
 - Submit:
   ```bash
-  kalshi-trader three-leg --player "<name>" --rest-days <n> \
+  kalshi-trader three-leg --player "<name>" --match-on <ticket orientation> --rest-days <n> \
       --match-edge <m> --title-edge <t> --execute
   ```
   (`--execute` routes each sized leg through compliance → risk → execution and honours

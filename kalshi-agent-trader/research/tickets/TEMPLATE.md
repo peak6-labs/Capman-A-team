@@ -1,25 +1,28 @@
 ---
 strategy: three-leg
-player: <Full Name>
-gender: <men | women>
+player: <screen anchor, the favourite's Full Name>     # the --player you pass the CLI
+match_player: <Full Name>                # M — backed to WIN THE MATCH (Leg 1)
+title_player: <Full Name>                # T — backed to WIN THE TITLE (Leg 2); the OTHER player
+match_on: <favorite | underdog>          # which player anchors the match leg (executor passes this)
+gender: men                              # men only for now (Bo5; "5 sets" undefined for women)
 created: <YYYY-MM-DDThh:mm:ssZ>          # UTC; executor refuses tickets older than ticket_max_age_min
 ticket_max_age_min: 30                   # copied from config.yaml three_leg:
 verdict: <GO | NO-GO>
-rest_days: <n>                           # actual QF→SF turnaround from the schedule, not the default
+rest_days: <n>                           # actual match→SF turnaround from the schedule
 drift_tolerance:
   match: 0.02                            # abort execution if the live match ask drifts past this
   title: 0.03                            # ...and likewise for the title ask
 ---
 
-## Legs (PROPOSE)
+## Legs (PROPOSE) — legs are on DIFFERENT players
 
-Source: `kalshi-trader three-leg --json --player "<name>" --rest-days <n> --match-edge <m> --title-edge <t>`
+Source: `kalshi-trader three-leg --json --player "<name>" --match-on <orientation> --rest-days <n> --match-edge <m> --title-edge <t>`
 
-| Leg   | Ticker            | Side | Ask  | Fair | Contracts | Cost  |
-|-------|-------------------|------|------|------|-----------|-------|
-| match | KX...             | yes  | 0.74 | 0.78 | N         | $X    |
-| title | KX...             | yes  | 0.31 | 0.33 | M         | $Y    |
-| hedge | KX...set1, ...set2| yes  | ...  | —    | ρ·M       | $Z    |   <!-- or: "pending — market not live; re-run when <event> lists" -->
+| Leg          | Player | Ticker | Side | Ask  | Contracts | Cost |
+|--------------|--------|--------|------|------|-----------|------|
+| 1 match      | M      | KX...  | yes  | 0.62 | N         | $X   |
+| 2 title      | T      | KX...  | yes  | 0.18 | M         | $Y   |
+| 3 out (T 3-2)| T      | KX...  | yes  | 0.14 | ρ·ref     | $Z   |   <!-- or: "pending — 5-set market not live; re-run when <event> lists" -->
 
 ## Edge claim & why
 <The specific, defensible edge that beats the flat-EV prior — or, for a NO-GO, exactly

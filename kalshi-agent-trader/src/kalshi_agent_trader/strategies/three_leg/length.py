@@ -43,10 +43,11 @@ class LongWinCandidate:
     score_label: str      # "3-1"
     ticker: str
     sets_won: int         # winner's sets (3 men / 2 women)
-    sets_lost: int        # 0 = sweep; the fatigue `extra_sets`
+    sets_lost: int        # 0 = sweep; the fatigue `extra_sets` (loser's set count)
     yes_ask: Decimal
     yes_mid: Decimal
     devig_prob: Decimal   # market prob after normalising the event's outcomes
+    winner_is_match: bool = True  # True ⇒ the MATCH-leg player wins this score
 
 
 def _mid(m: Market) -> Optional[Decimal]:
@@ -133,11 +134,14 @@ def _parse(market: Market) -> Optional[Tuple[str, int, int]]:
 
 
 def discover(
-    md, match_market: Market, favorite_name: str,
+    md, match_market: Market, match_player_name: str,
 ) -> Tuple[List[LongWinCandidate], str]:
-    """Favourite's win-by-score outcomes (de-vigged) + a note.
+    """Every exact-score outcome (BOTH players), de-vigged, tagged by winner + a note.
 
-    Returns ([], note) when no exact-score market is listed for the match.
+    Tagged relative to the MATCH-leg player (the one we back to win the match): the
+    "out" is the OTHER (title-leg) player winning in 5 sets, so the caller selects
+    ``not winner_is_match and sets_lost == 2``. Returns ([], note) when no
+    exact-score market is listed for the match.
     """
     exact_event = exact_event_for(match_market)
     if not exact_event:
@@ -152,7 +156,7 @@ def discover(
     if total <= 0:
         return [], "exact-score book empty/illiquid"
 
-    fav = normalize_name(favorite_name)
+    mp = normalize_name(match_player_name)
     out: List[LongWinCandidate] = []
     for m in markets:
         parsed = _parse(m)
@@ -161,13 +165,13 @@ def discover(
             continue
         winner, a, b = parsed
         wnorm = normalize_name(winner)
-        if not (fav and (fav in wnorm or wnorm in fav)):
-            continue  # opponent's win-score; only used implicitly via de-vig total
+        is_match = bool(mp and (mp in wnorm or wnorm in mp))
         out.append(LongWinCandidate(
             score_label=f"{a}-{b}", ticker=m.ticker, sets_won=a, sets_lost=b,
             yes_ask=m.yes_ask, yes_mid=mid, devig_prob=mid / total,
+            winner_is_match=is_match,
         ))
 
-    out.sort(key=lambda c: c.sets_lost)
-    note = "" if out else "favourite has no priced win-scores"
+    out.sort(key=lambda c: (not c.winner_is_match, c.sets_lost))  # match player first, then by length
+    note = "" if out else "no priced exact scores"
     return out, note

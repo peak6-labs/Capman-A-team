@@ -1,0 +1,22 @@
+# Roland Garros 2026 — women's draw, state as of 2026-06-02.
+# Top half is at the QF stage; the bottom half (Kostyuk vs Andreeva) IS the SF.
+gender: women
+events:
+  win: KXFOWOMEN-26
+  final: KXWTAADVANCE-26FOFIN
+  sf: KXWTAADVANCE-26FOSF
+match_series: KXWTAMATCH
+players: [Sabalenka, Shnaider, Kalinskaya, Chwalinska, Kostyuk, Andreeva]
+roles: {sf: SF, final: F}
+rounds:
+  - name: QF
+    matches:
+      - [Sabalenka, Shnaider]
+      - [Kalinskaya, Chwalinska]
+  - name: SF
+    matches:
+      - ["winner:QF:0", "winner:QF:1"]     # top half SF
+      - [Kostyuk, Andreeva]                # bottom half SF (already at this stage)
+  - name: F
+    matches:
+      - ["winner:SF:0", "winner:SF:1"]

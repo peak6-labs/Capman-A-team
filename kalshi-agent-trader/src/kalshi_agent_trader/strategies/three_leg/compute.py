@@ -130,16 +130,17 @@ def size_hedge_leg(
     price: Decimal,
     market_fair: Decimal,
     ratio: Decimal,
-    title_contracts: int,
+    reference_contracts: int,
     extra_sets: int,
 ) -> Leg:
-    """Size a long-win HEDGE leg to a fraction `ratio` of the title position.
+    """Size the "out" leg to a fraction `ratio` of the directional position it covers.
 
-    contracts = round(title_contracts · ratio). The leg carries no fabricated
-    edge: its `fair` stays at the de-vigged market prob (we're buying insurance,
-    not alpha). `kelly_f` holds the hedge ratio so the renderer can show it.
+    contracts = round(reference_contracts · ratio) — where reference is the
+    directional exposure being insured (match + title). The leg carries no
+    fabricated edge: its `fair` stays at the de-vigged market prob (it's an out,
+    not alpha). `kelly_f` holds the ratio so the renderer can show it.
     """
-    contracts = int((D(title_contracts) * ratio).to_integral_value(rounding=ROUND_HALF_UP))
+    contracts = int((D(reference_contracts) * ratio).to_integral_value(rounding=ROUND_HALF_UP))
     contracts = max(0, contracts)
     return Leg(
         label=label, ticker=ticker, price=price, market_fair=market_fair,
@@ -150,12 +151,17 @@ def size_hedge_leg(
 
 @dataclass(frozen=True)
 class Outcome:
-    """One terminal QF result and how the legs pay (in contract units)."""
-    label: str                # "loses QF" | "wins 3-0" | "wins 3-1" | ...
-    prob: Decimal             # de-vigged probability of this QF result
-    is_win: bool              # F won the QF (Leg 1 pays)
-    sets_lost: int            # 0 for a sweep; >0 for a long win
-    leg3_pay: Decimal = ZERO  # contracts of the length leg that pays in THIS result
+    """One terminal match result and which legs fire (in contract units).
+
+    The legs sit on DIFFERENT players: leg 1 = A wins the match, leg 2 = B (the
+    opponent) wins the tournament, leg 3 = B wins the match in 5 sets. So payouts
+    key off the match winner — and, for the B-wins branch, whether B then takes
+    the title (resolved via the title split in net_pnl / expected_value).
+    """
+    label: str                # "A wins 3-1" | "B wins 3-2 (5-set OUT)" | ...
+    prob: Decimal             # de-vigged probability of this exact match result
+    a_wins_match: bool        # Leg 1 (A match) pays in this result
+    leg3_pay: Decimal = ZERO  # contracts of Leg 3 paying here (nonzero only for B-wins-in-5)
 
 
 @dataclass
@@ -187,29 +193,36 @@ class ThreeLegPlan:
         return self.match_leg.sized or (self.title_leg and self.title_leg.sized) \
             or any(leg.sized for leg in self.long_legs)
 
-    def net_pnl(self, outcome: Outcome, *, title_win: bool) -> Decimal:
-        """Net $ P&L in this QF result, optionally if F then wins the title.
+    def net_pnl(self, outcome: Outcome, *, b_wins_title: bool) -> Decimal:
+        """Net $ P&L in this match result, optionally if B then wins the title.
 
-        The length/set hedge (`leg3_pay`) settles on its OWN trigger, so it can
-        pay even when F loses the match — e.g. a women's set-winner hedge that
-        cashes because F dropped a set. Match/title legs need F to win.
+        Legs are on different players: Leg 1 (A match) pays iff A won; Leg 2 (B's
+        title) pays only in a B-wins-the-match branch where B goes on to win the
+        title; Leg 3 (B's 5-set) pays only when B won in 5 — the "out" that fires
+        in the worry case (B beats A but doesn't win the title).
         """
-        payoff = outcome.leg3_pay                        # hedge settles on its own trigger
-        if outcome.is_win:
-            payoff += D(self.match_leg.contracts)        # Leg 1 settles on a QF win
-            if title_win and self.title_leg:
-                payoff += D(self.title_leg.contracts)    # Leg 2 settles on a title
+        payoff = ZERO
+        if outcome.a_wins_match:
+            payoff += D(self.match_leg.contracts)            # Leg 1 — A won the match
+        else:                                                # B won the match
+            if b_wins_title and self.title_leg:
+                payoff += D(self.title_leg.contracts)        # Leg 2 — B wins the title
+            payoff += outcome.leg3_pay                       # Leg 3 — B won in 5 (the out)
         return payoff - self.total_cost
 
-    def expected_value(self, *, p_title_given_advance: Decimal) -> Decimal:
-        """EV over QF outcomes, splitting each win on title vs no-title."""
+    def expected_value(self, *, p_b_title_given_advance: Decimal) -> Decimal:
+        """EV over match results; B-wins branches split on B winning the title.
+
+        When A wins the match our title bet (on B) is dead, so those outcomes
+        contribute net_pnl directly. When B wins, split on P(B wins title | B advances).
+        """
         ev = ZERO
         for o in self.outcomes:
-            if not o.is_win:
-                ev += o.prob * self.net_pnl(o, title_win=False)
+            if o.a_wins_match:
+                ev += o.prob * self.net_pnl(o, b_wins_title=False)
                 continue
             ev += o.prob * (
-                p_title_given_advance * self.net_pnl(o, title_win=True)
-                + (ONE - p_title_given_advance) * self.net_pnl(o, title_win=False)
+                p_b_title_given_advance * self.net_pnl(o, b_wins_title=True)
+                + (ONE - p_b_title_given_advance) * self.net_pnl(o, b_wins_title=False)
             )
         return ev

@@ -1,0 +1,19 @@
+# Clay-court Elo, Tennis Abstract (pulled 2026-06-02). Update as ratings move.
+# Used as the BASE rating; pairs with a live match market are calibrated to it
+# (see simulate.calibrate_ratings), so these only drive matchups with no market yet.
+# men
+Zverev: 2021.3
+Fonseca: 1808.1
+Mensik: 1781.6
+Cobolli: 1829.7
+Auger: 1843.7
+Berrettini: 1755.9
+Arnaldi: 1756.4
+Jodar: 1935.1
+# women
+Sabalenka: 2116.4
+Kostyuk: 1958.5
+Andreeva: 1993.1
+Kalinskaya: 1774.1
+Shnaider: 1801.5
+Chwalinska: 1675.2
