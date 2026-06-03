@@ -1,0 +1,4 @@
+fastapi>=0.111
+uvicorn[standard]>=0.29
+# kalshi-agent-trader must be installed separately (editable install from the sibling dir)
+# pip install -e ../../Capman-A-team/kalshi-agent-trader
