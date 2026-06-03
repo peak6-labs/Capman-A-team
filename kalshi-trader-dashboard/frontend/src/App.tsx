@@ -1,19 +1,54 @@
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import Control from './pages/Control'
 import Portfolio from './pages/Portfolio'
 import Trades from './pages/Trades'
 import PnL from './pages/PnL'
+import { getPortfolio, type PortfolioResponse } from './api'
 import './index.css'
+
+function NavAccountValues() {
+  const [data, setData] = useState<PortfolioResponse | null>(null)
+
+  useEffect(() => {
+    const load = () => getPortfolio().then(setData).catch(() => {})
+    load()
+    const id = setInterval(load, 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const fmt = (v: string | null | undefined) => {
+    if (!v) return '—'
+    const n = parseFloat(v)
+    return isNaN(n) ? '—' : `$${n.toFixed(2)}`
+  }
+
+  if (!data) return null
+
+  return (
+    <div className="nav-right">
+      <div className="nav-account">
+        <span className="nav-amount">{fmt(data.cash_balance_usd)}</span>
+        <span className="nav-sublabel">Cash</span>
+      </div>
+      <div className="nav-account">
+        <span className="nav-amount nav-amount-pos">{fmt(data.portfolio_value_usd)}</span>
+        <span className="nav-sublabel">Portfolio</span>
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   return (
     <BrowserRouter>
       <nav>
-        <span className="brand">Kalshi Trader</span>
-        <NavLink to="/" end>Control</NavLink>
-        <NavLink to="/portfolio">Portfolio</NavLink>
-        <NavLink to="/trades">Trades</NavLink>
-        <NavLink to="/pnl">PnL</NavLink>
+        <span className="brand"><span className="brand-kalshi">Kalshi</span><span className="brand-sub">Trader Dashboard</span></span>
+        <NavLink to="/" end>CONTROL</NavLink>
+        <NavLink to="/portfolio">PORTFOLIO</NavLink>
+        <NavLink to="/trades">TRADES</NavLink>
+        <NavLink to="/pnl">PNL</NavLink>
+        <NavAccountValues />
       </nav>
       <Routes>
         <Route path="/" element={<Control />} />

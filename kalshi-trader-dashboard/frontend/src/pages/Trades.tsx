@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
 import { getCurrentTrades, getTradeHistory, type CurrentTrades, type TradeHistory } from '../api'
+import { parseTicker } from '../tickerUtils'
 
 function ts(v: number | null | undefined) {
   if (!v) return '—'
-  return new Date(v).toLocaleString()
+  return new Date(v).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
 }
 
 function pct(v: number | null | undefined) {
@@ -11,11 +14,34 @@ function pct(v: number | null | undefined) {
   return `${(v * 100).toFixed(1)}%`
 }
 
-function outcomeClass(outcome: string) {
-  if (outcome === 'placed') return 'pos'
-  if (outcome === 'rejected') return 'neg'
-  if (outcome === 'dry_run') return ''
-  return 'muted'
+function OutcomeBadge({ outcome }: { outcome: string }) {
+  const cls =
+    outcome === 'placed' ? 'badge-green' :
+    outcome === 'rejected' ? 'badge-red' :
+    outcome === 'dry_run' ? 'badge-orange' :
+    'badge-gray'
+  return <span className={`badge ${cls}`}>{outcome}</span>
+}
+
+function SideBadge({ side }: { side: string | null }) {
+  if (!side) return <span className="muted">—</span>
+  const isYes = side.toLowerCase() === 'yes'
+  return <span className={`side-badge ${isYes ? 'yes' : 'no'}`}>{side}</span>
+}
+
+function ActionBadge({ action }: { action: string | null }) {
+  if (!action) return <span className="muted">—</span>
+  return <span className="badge badge-gray">{action}</span>
+}
+
+function MarketCell({ ticker }: { ticker: string | null | undefined }) {
+  const { label, detail } = parseTicker(ticker)
+  return (
+    <div>
+      <div style={{ fontWeight: 500, fontSize: '0.8125rem' }}>{label}</div>
+      {detail && <div className="muted" style={{ marginTop: 2 }}>{detail}</div>}
+    </div>
+  )
 }
 
 export default function Trades() {
@@ -25,11 +51,12 @@ export default function Trades() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [historyTab, setHistoryTab] = useState<'fills' | 'decisions'>('fills')
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const loadCurrent = () => {
     setLoading(true)
     getCurrentTrades()
-      .then(d => { setCurrent(d); setError(null) })
+      .then(d => { setCurrent(d); setError(null); setLastUpdated(new Date()) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }
@@ -37,14 +64,19 @@ export default function Trades() {
   const loadHistory = () => {
     setLoading(true)
     getTradeHistory()
-      .then(d => { setHistory(d); setError(null) })
+      .then(d => { setHistory(d); setError(null); setLastUpdated(new Date()) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }
 
   useEffect(() => {
-    if (tab === 'current') loadCurrent()
-    else loadHistory()
+    if (tab === 'current') {
+      loadCurrent()
+      const id = setInterval(loadCurrent, 30_000)
+      return () => clearInterval(id)
+    } else {
+      loadHistory()
+    }
   }, [tab])
 
   return (
@@ -52,9 +84,13 @@ export default function Trades() {
       <h1>Trades</h1>
       {error && <p className="error">{error}</p>}
 
-      <div className="tabs">
-        <button className={`tab ${tab === 'current' ? 'active' : ''}`} onClick={() => setTab('current')}>Current</button>
-        <button className={`tab ${tab === 'history' ? 'active' : ''}`} onClick={() => setTab('history')}>History</button>
+      <div className="tabs-line">
+        <button className={`tab-line ${tab === 'current' ? 'active' : ''}`} onClick={() => setTab('current')}>
+          Current
+        </button>
+        <button className={`tab-line ${tab === 'history' ? 'active' : ''}`} onClick={() => setTab('history')}>
+          History
+        </button>
       </div>
 
       {loading && <span className="spinner" />}
@@ -67,17 +103,27 @@ export default function Trades() {
               ? <p className="muted">No open positions.</p>
               : (
                 <table>
-                  <thead><tr>
-                    <th>Ticker</th><th>Position</th><th>Exposure</th><th>Cost</th><th>Realized PnL</th>
-                  </tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Market</th><th>Position</th><th>Exposure</th><th>Cost</th><th>Realized PnL</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {current.open_positions.map((p, i) => (
                       <tr key={i}>
-                        <td><code style={{ fontSize: '0.75rem', background: '#2d3148', padding: '2px 6px', borderRadius: 4 }}>{p.ticker}</code></td>
-                        <td>{p.position ?? '—'}</td>
+                        <td><MarketCell ticker={p.ticker} /></td>
+                        <td>
+                          {p.position != null ? (
+                            <span className={`side-badge ${parseFloat(p.position) >= 0 ? 'yes' : 'no'}`}>
+                              {parseFloat(p.position) >= 0 ? 'Yes' : 'No'} · {Math.abs(parseFloat(p.position))}
+                            </span>
+                          ) : '—'}
+                        </td>
                         <td>{p.exposure_usd ? `$${parseFloat(p.exposure_usd).toFixed(2)}` : '—'}</td>
                         <td>{p.cost_usd ? `$${parseFloat(p.cost_usd).toFixed(2)}` : '—'}</td>
-                        <td>{p.realized_pnl_usd ? `$${parseFloat(p.realized_pnl_usd).toFixed(2)}` : '—'}</td>
+                        <td className={p.realized_pnl_usd && parseFloat(p.realized_pnl_usd) >= 0 ? 'pos' : 'neg'}>
+                          {p.realized_pnl_usd ? `$${parseFloat(p.realized_pnl_usd).toFixed(2)}` : '—'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -91,18 +137,20 @@ export default function Trades() {
               ? <p className="muted">No resting orders.</p>
               : (
                 <table>
-                  <thead><tr>
-                    <th>Ticker</th><th>Action</th><th>Side</th><th>Price</th><th>Count</th><th>Status</th>
-                  </tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Market</th><th>Action</th><th>Side</th><th>Price</th><th>Count</th><th>Status</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {current.resting_orders.map((o, i) => (
                       <tr key={i}>
-                        <td><code style={{ fontSize: '0.75rem', background: '#2d3148', padding: '2px 6px', borderRadius: 4 }}>{o.ticker}</code></td>
-                        <td>{o.action}</td>
-                        <td>{o.side}</td>
+                        <td><MarketCell ticker={o.ticker} /></td>
+                        <td><ActionBadge action={o.action} /></td>
+                        <td><SideBadge side={o.side} /></td>
                         <td>{o.price_usd ? `$${parseFloat(o.price_usd).toFixed(2)}` : '—'}</td>
                         <td>{o.count ?? '—'}</td>
-                        <td>{o.status ?? '—'}</td>
+                        <td><span className="badge badge-gray">{o.status ?? '—'}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -114,11 +162,17 @@ export default function Trades() {
 
       {tab === 'history' && history && !loading && (
         <>
-          <div className="tabs">
-            <button className={`tab ${historyTab === 'fills' ? 'active' : ''}`} onClick={() => setHistoryTab('fills')}>
+          <div className="tabs-line" style={{ marginBottom: '1rem' }}>
+            <button
+              className={`tab-line ${historyTab === 'fills' ? 'active' : ''}`}
+              onClick={() => setHistoryTab('fills')}
+            >
               Fills ({history.fills.length})
             </button>
-            <button className={`tab ${historyTab === 'decisions' ? 'active' : ''}`} onClick={() => setHistoryTab('decisions')}>
+            <button
+              className={`tab-line ${historyTab === 'decisions' ? 'active' : ''}`}
+              onClick={() => setHistoryTab('decisions')}
+            >
               Decisions ({history.decisions.length})
             </button>
           </div>
@@ -129,18 +183,20 @@ export default function Trades() {
                 ? <p className="muted">No fills on record.</p>
                 : (
                   <table>
-                    <thead><tr>
-                      <th>Time</th><th>Ticker</th><th>Side</th><th>Action</th><th>Count</th><th>Price</th>
-                    </tr></thead>
+                    <thead>
+                      <tr>
+                        <th>Time</th><th>Market</th><th>Side</th><th>Action</th><th>Count</th><th>Price</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {history.fills.map((f, i) => (
                         <tr key={i}>
-                          <td className="muted">{ts(f.ts)}</td>
-                          <td><code style={{ fontSize: '0.75rem', background: '#2d3148', padding: '2px 6px', borderRadius: 4 }}>{f.ticker ?? '—'}</code></td>
-                          <td>{f.side ?? '—'}</td>
-                          <td>{f.action ?? '—'}</td>
+                          <td className="muted" style={{ whiteSpace: 'nowrap' }}>{ts(f.ts)}</td>
+                          <td><MarketCell ticker={f.ticker} /></td>
+                          <td><SideBadge side={f.side ?? null} /></td>
+                          <td><ActionBadge action={f.action ?? null} /></td>
                           <td>{f.count ?? '—'}</td>
-                          <td>{f.price_usd ? `$${parseFloat(f.price_usd).toFixed(2)}` : '—'}</td>
+                          <td>{f.price_usd ? `${(parseFloat(f.price_usd) * 100).toFixed(1)}¢` : '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -155,19 +211,22 @@ export default function Trades() {
                 ? <p className="muted">No decisions in journal.</p>
                 : (
                   <table>
-                    <thead><tr>
-                      <th>Time</th><th>Ticker</th><th>Side</th><th>Outcome</th><th>Confidence</th><th>Gate</th><th>Reason</th>
-                    </tr></thead>
+                    <thead>
+                      <tr>
+                        <th>Time</th><th>Market</th><th>Side</th><th>Outcome</th>
+                        <th>Confidence</th><th>Gate</th><th>Reason</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {history.decisions.map((d, i) => (
                         <tr key={i}>
-                          <td className="muted">{ts(d.ts)}</td>
-                          <td><code style={{ fontSize: '0.75rem', background: '#2d3148', padding: '2px 6px', borderRadius: 4 }}>{d.market_ticker ?? '—'}</code></td>
-                          <td>{d.side ?? '—'}</td>
-                          <td className={outcomeClass(d.outcome)}>{d.outcome}</td>
+                          <td className="muted" style={{ whiteSpace: 'nowrap' }}>{ts(d.ts)}</td>
+                          <td><MarketCell ticker={d.market_ticker} /></td>
+                          <td><SideBadge side={d.side ?? null} /></td>
+                          <td><OutcomeBadge outcome={d.outcome} /></td>
                           <td>{pct(d.confidence)}</td>
                           <td className="muted">{d.gate ?? '—'}</td>
-                          <td className="muted" style={{ maxWidth: 250, wordBreak: 'break-word' }}>{d.reason ?? '—'}</td>
+                          <td className="muted" style={{ maxWidth: 240, wordBreak: 'break-word' }}>{d.reason ?? '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -178,9 +237,20 @@ export default function Trades() {
         </>
       )}
 
-      <button className="btn btn-gray" onClick={() => tab === 'current' ? loadCurrent() : loadHistory()} disabled={loading} style={{ marginTop: '0.5rem' }}>
-        {loading ? <span className="spinner" /> : null} Refresh
-      </button>
+      <div style={{ marginTop: '1.25rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <button
+          className="btn btn-gray"
+          onClick={() => tab === 'current' ? loadCurrent() : loadHistory()}
+          disabled={loading}
+        >
+          {loading ? <span className="spinner" /> : null} Refresh
+        </button>
+        {lastUpdated && (
+          <span className="muted">
+            Updated {lastUpdated.toLocaleTimeString()}{tab === 'current' ? ' · auto-refreshes every 30s' : ''}
+          </span>
+        )}
+      </div>
     </div>
   )
 }

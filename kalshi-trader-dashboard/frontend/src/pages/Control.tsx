@@ -6,16 +6,21 @@ export default function Control() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const refresh = () => {
     setLoading(true)
     getControlStatus()
-      .then(s => { setStatus(s); setError(null) })
+      .then(s => { setStatus(s); setError(null); setLastUpdated(new Date()) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => {
+    refresh()
+    const id = setInterval(refresh, 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   const toggleKill = async () => {
     if (!status) return
@@ -124,9 +129,14 @@ export default function Control() {
             </div>
           </div>
 
-          <button className="btn btn-gray" onClick={refresh} disabled={loading || busy} style={{ marginTop: '0.5rem' }}>
-            {loading ? <span className="spinner" /> : null} Refresh
-          </button>
+          <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <button className="btn btn-gray" onClick={refresh} disabled={loading || busy}>
+              {loading ? <span className="spinner" /> : null} Refresh
+            </button>
+            {lastUpdated && (
+              <span className="muted">Updated {lastUpdated.toLocaleTimeString()} · auto-refreshes every 30s</span>
+            )}
+          </div>
         </>
       )}
     </div>

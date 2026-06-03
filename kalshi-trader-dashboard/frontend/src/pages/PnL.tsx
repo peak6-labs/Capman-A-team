@@ -42,11 +42,12 @@ export default function PnL() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'overview' | 'calibration'>('overview')
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const refresh = () => {
     setLoading(true)
     Promise.all([getPnlSummary(), getPnlTimeseries()])
-      .then(([s, ts]) => { setSummary(s); setSeries(ts); setError(null) })
+      .then(([s, ts]) => { setSummary(s); setSeries(ts); setError(null); setLastUpdated(new Date()) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }
@@ -60,14 +61,15 @@ export default function PnL() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { refresh() }, [])
-
   useEffect(() => {
-    if (tab === 'calibration') loadCalibration()
-  }, [tab])
+    refresh()
+    const id = setInterval(refresh, 30_000)
+    return () => clearInterval(id)
+  }, [])
+  useEffect(() => { if (tab === 'calibration') loadCalibration() }, [tab])
 
   const chartData = series?.points.map(p => ({
-    time: new Date(p.ts).toLocaleDateString(),
+    time: new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
     pnl: parseFloat(p.cumulative_realized_usd),
   })) ?? []
 
@@ -76,25 +78,30 @@ export default function PnL() {
       <h1>PnL</h1>
       {error && <p className="error">{error}</p>}
 
-      <div className="tabs">
-        <button className={`tab ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
-        <button className={`tab ${tab === 'calibration' ? 'active' : ''}`} onClick={() => setTab('calibration')}>Calibration</button>
+      <div className="tabs-line">
+        <button className={`tab-line ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>
+          Overview
+        </button>
+        <button className={`tab-line ${tab === 'calibration' ? 'active' : ''}`} onClick={() => setTab('calibration')}>
+          Calibration
+        </button>
       </div>
 
       {tab === 'overview' && (
         <>
           {loading && !summary ? <span className="spinner" /> : summary && (
             <>
-              <div className="grid-3" style={{ marginBottom: '1rem' }}>
-                <div className="card">
+              {/* Inline stat row */}
+              <div style={{ display: 'flex', gap: '2.5rem', marginBottom: '1.75rem', alignItems: 'flex-start' }}>
+                <div>
                   <div className="stat-label">Realized PnL</div>
                   <div className={`stat-value ${fmtClass(summary.realized_usd)}`}>{fmt(summary.realized_usd)}</div>
                 </div>
-                <div className="card">
+                <div>
                   <div className="stat-label">Unrealized PnL</div>
                   <div className={`stat-value ${fmtClass(summary.unrealized_usd)}`}>{fmt(summary.unrealized_usd)}</div>
                 </div>
-                <div className="card">
+                <div>
                   <div className="stat-label">Total PnL</div>
                   <div className={`stat-value ${fmtClass(summary.total_usd)}`}>{fmt(summary.total_usd)}</div>
                 </div>
@@ -105,39 +112,44 @@ export default function PnL() {
                 {chartData.length === 0
                   ? <p className="muted">No fill history to chart yet.</p>
                   : (
-                    <ResponsiveContainer width="100%" height={260}>
+                    <ResponsiveContainer width="100%" height={280}>
                       <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#2d3148" />
-                        <XAxis dataKey="time" tick={{ fontSize: 11, fill: '#64748b' }} />
-                        <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={v => `$${v.toFixed(2)}`} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
+                        <XAxis dataKey="time" tick={{ fontSize: 11, fill: '#6b7280' }} />
+                        <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} tickFormatter={v => `$${v.toFixed(2)}`} />
                         <Tooltip
-                          contentStyle={{ background: '#1a1d27', border: '1px solid #2d3148', borderRadius: 6 }}
-                          labelStyle={{ color: '#94a3b8', fontSize: 11 }}
+                          contentStyle={{ background: '#131318', border: '1px solid #1f1f2e', borderRadius: 8 }}
+                          labelStyle={{ color: '#9ca3af', fontSize: 11 }}
                           formatter={(v) => [`$${Number(v ?? 0).toFixed(2)}`, 'Cumulative PnL']}
                         />
                         <Line
                           type="monotone"
                           dataKey="pnl"
-                          stroke="#7c8cf8"
+                          stroke="#00c9a7"
                           strokeWidth={2}
                           dot={false}
-                          activeDot={{ r: 4 }}
+                          activeDot={{ r: 4, fill: '#00c9a7' }}
                         />
                       </LineChart>
                     </ResponsiveContainer>
                   )}
                 {series && (
-                  <p className="muted" style={{ marginTop: '0.5rem' }}>
-                    Current unrealized: {fmt(series.current_unrealized_usd)} &nbsp;|&nbsp;
+                  <p className="muted" style={{ marginTop: '0.75rem' }}>
+                    Current unrealized: {fmt(series.current_unrealized_usd)}&ensp;·&ensp;
                     {chartData.length} fill event{chartData.length !== 1 ? 's' : ''}
                   </p>
                 )}
               </div>
             </>
           )}
-          <button className="btn btn-gray" onClick={refresh} disabled={loading}>
-            {loading ? <span className="spinner" /> : null} Refresh
-          </button>
+          <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <button className="btn btn-gray" onClick={refresh} disabled={loading}>
+              {loading ? <span className="spinner" /> : null} Refresh
+            </button>
+            {lastUpdated && (
+              <span className="muted">Updated {lastUpdated.toLocaleTimeString()} · auto-refreshes every 30s</span>
+            )}
+          </div>
         </>
       )}
 
@@ -145,10 +157,10 @@ export default function PnL() {
         <>
           {loading && !calibration ? <span className="spinner" /> : calibration && (
             <>
-              <div className="card" style={{ marginBottom: '0.5rem' }}>
+              <div className="card" style={{ marginBottom: '0.75rem' }}>
                 <p className="muted">
-                  Scored {calibration.scored} position{calibration.scored !== 1 ? 's' : ''} &nbsp;|&nbsp;
-                  {calibration.skipped_unsettled} unsettled &nbsp;|&nbsp;
+                  Scored {calibration.scored} position{calibration.scored !== 1 ? 's' : ''}&ensp;·&ensp;
+                  {calibration.skipped_unsettled} unsettled&ensp;·&ensp;
                   {calibration.skipped_no_prediction} no prediction
                 </p>
               </div>
