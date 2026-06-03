@@ -42,6 +42,12 @@ and verdict rubric). Follow it. In short:
    the legs, the EV by terminal outcome, and the drift/staleness guards copied from
    `config.yaml` `three_leg:`.
 
+## Tools
+- **Bash** — all `kalshi-trader` CLI calls (read-only: `three-leg --json`, `markets`, `orderbook`).
+- **WebSearch** — get the *current* RG schedule (QF date, SF date) for a named player. Use once per candidate; don't pre-search all players.
+- **WebFetch** — only when WebSearch returns a specific URL worth reading in full. Prefer WebSearch for schedule lookups.
+- **Read / Write** — reading `config.yaml` and `research/tickets/TEMPLATE.md`; writing the ticket.
+
 ## Discipline
 - Be honest and quantitative. If it's flat, the ticket says NO-GO — that is a complete,
   successful result, not a failure.

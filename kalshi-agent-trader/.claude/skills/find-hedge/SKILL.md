@@ -61,3 +61,16 @@ A compact comparison — **EXIT vs each HEDGE** (cost, edge, P&L-if-position-los
 whether exit dominates) — then a one-line recommendation, then the suggested
 passive order with its size clamped to the live caps and the "fills on recovery"
 caveat. End by asking whether to place it.
+
+### Example
+```
+EXIT:  sell 7 contracts @ $0.61 bid → locked P&L: −$0.70  (avg cost $0.71)
+HEDGE: buy 7 OPPONENT-QF-YES @ $0.38 ask → locked P&L: −$0.61  ← preferred
+       edge: +$0.09/contract vs exit; fills in adverse move (not on recovery)
+
+Recommendation: hedge via OPPONENT-QF-YES passive @ $0.36 (7 contracts, clamped from 9
+by gross-exposure cap). Note: this fills only if price recovers — it won't protect
+against a fast adverse move.
+
+Place it? (yes / no / adjust size)
+```

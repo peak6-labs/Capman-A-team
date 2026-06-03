@@ -29,6 +29,11 @@ what an approved ticket specifies, or you refuse and explain why.
    gate counts a hedge as added gross exposure and will clamp it; report the clamp, never
    work around it.
 
+## Tools
+- **Read** — ticket file (`research/tickets/`), `config.yaml` (dry_run check). Read these first; don't Bash-cat them.
+- **Bash** — `kalshi-trader` CLI only: drift-check snapshot, `--execute` submit, per-leg `order`.
+  Nothing else. You do no web research and access no external data.
+
 ## How to work
 Run the **`three-leg-execute`** skill — your detailed playbook (ticket validation, the
 drift/staleness check via `kalshi-trader three-leg --json`, the dry-run-first sequence,
