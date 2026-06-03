@@ -6,3 +6,4 @@ __pycache__/
 *.key
 *.txt.key
 .env
+.codegraph/
