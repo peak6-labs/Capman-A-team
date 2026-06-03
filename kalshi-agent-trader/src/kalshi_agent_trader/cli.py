@@ -276,6 +276,54 @@ def three_leg(
 
 
 @app.command()
+def calibrate() -> None:
+    """Brier-score closed positions against Kalshi settlement (read-only; places nothing).
+
+    Strategy-agnostic feedback loop: scores whatever proposed each position by joining
+    its realized outcome to the predicted fair_prob recorded in the decisions journal,
+    bucketed by source and category. Surfaces whether our probabilities are calibrated.
+    """
+    from .analysis.calibration import score_calibration
+
+    cfg = load_config()
+    with KalshiClient(cfg) as client, Journal() as journal:
+        md = MarketData(client)
+        report = score_calibration(journal, md)
+
+    if report.scored == 0:
+        console.print(
+            f"[yellow]No positions scored.[/yellow] "
+            f"unsettled={report.skipped_unsettled}, "
+            f"no_prediction={report.skipped_no_prediction}"
+        )
+        return
+
+    def _fmt3(v):
+        return "—" if v is None else f"{v:.3f}"
+
+    def _rows(table: Table, buckets) -> None:
+        for b in sorted(buckets, key=lambda x: x.count, reverse=True):
+            table.add_row(
+                b.label, str(b.count), _fmt3(b.brier),
+                _fmt3(b.mean_predicted), _fmt3(b.mean_realized),
+            )
+
+    table = Table(title=f"Calibration ({report.scored} positions scored)")
+    for col in ("bucket", "n", "brier", "mean_pred", "mean_realized"):
+        table.add_column(col, overflow="fold")
+    _rows(table, [report.overall])
+    table.add_section()
+    _rows(table, report.by_source.values())
+    table.add_section()
+    _rows(table, report.by_category.values())
+    console.print(table)
+    console.print(
+        f"[dim]skipped — unsettled: {report.skipped_unsettled}, "
+        f"no prediction: {report.skipped_no_prediction}[/dim]"
+    )
+
+
+@app.command()
 def hedge(
     ticker: Optional[str] = typer.Option(
         None, "--ticker", "-t",
