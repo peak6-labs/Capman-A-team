@@ -24,6 +24,7 @@ uv run kalshi-trader <command>
 | `kill` / `unkill` | — | Engage/clear the kill switch |
 | `three-leg` | No* | Screen QF favourites for the three-leg hedge. `--json` = snapshot for the research agent; `--execute` routes legs through the gates (*auth only when actually executing) |
 | `hedge` | Yes | Post-fill: exit-vs-hedge for an open match position (places nothing) |
+| `calibrate` | Yes | Brier-score closed positions vs Kalshi settlement (read-only); feedback on probability calibration |
 
 > Exploratory commands (`scan`, `run`, `rv-scan`, `rv-run`, `monitor`, `agent-scan`,
 > `agent-run`, `breakeven`, `dip`) were retired with their modules to `attic/`.
@@ -128,6 +129,13 @@ legs), `orders.py` (plan → orders), `render.py` (Rich view + `build_three_leg_
 **`tennis_screen.py`** / **`breakeven.py`** — shared tennis infra the three-leg screen
 depends on (series constants, competitor pairing, de-vig + breakeven fee math).
 
+### Calibration feedback loop (strategy-agnostic)
+
+**`analysis/calibration.py`** — Brier-scores closed positions against Kalshi settlement
+(`Market.result`), recovering each position's predicted `fair_prob` from the decisions
+journal and bucketing by source + category. Read-only; surfaced via the `calibrate` CLI.
+Scores whatever proposed a position, so it survives changes to how trades are sourced.
+
 ---
 
 > **Archived (Phase 4/5 below).** The systematic longshot core and the generic LLM agent
@@ -202,10 +210,11 @@ tests/
   test_risk.py          All cap types, kill switch, size clamping
   test_tennis_screen.py Player pairing, breakeven scenarios
   test_three_leg.py     Kelly/hedge-ratio sizing, set-proxy, net P&L, EV
+  test_agent_calibration.py  Brier scoring, settlement join, side-flip, unsettled skip
   attic/                Tests for archived strategies (excluded from collection)
 ```
 
-**80 tests, all pass.** (`pyproject.toml` excludes `tests/attic`.)
+**84 tests, all pass.** (`pyproject.toml` excludes `tests/attic`.)
 
 ---
 
