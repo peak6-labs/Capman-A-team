@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from decimal import Decimal
 from typing import Any, Optional
@@ -75,6 +76,7 @@ def control_status():
             "auth_ok": auth_ok,
             "error": auth_error,
         },
+        "username": os.environ.get("USER") or os.environ.get("USERNAME") or "operator",
     }
 
 

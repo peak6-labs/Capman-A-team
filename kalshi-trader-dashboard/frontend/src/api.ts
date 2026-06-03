@@ -29,6 +29,10 @@ export const getPortfolio = () => get<PortfolioResponse>('/portfolio')
 export const getCurrentTrades = () => get<CurrentTrades>('/trades/current')
 export const getTradeHistory = (limit = 200) => get<TradeHistory>(`/trades/history?limit=${limit}`)
 
+// Chat
+export const sendChat = (message: string, agent: 'executor' | 'research', history: ChatMessage[], username: string) =>
+  post<{ reply: string }>('/chat', { message, agent, history, username })
+
 // PnL
 export const getPnlSummary = () => get<PnlSummary>('/pnl/summary')
 export const getPnlTimeseries = () => get<PnlTimeseries>('/pnl/timeseries')
@@ -40,6 +44,7 @@ export interface ControlStatus {
   dry_run: boolean
   exchange: Record<string, unknown>
   auth: { credentials_present: boolean; auth_ok: boolean; error: string | null }
+  username: string
 }
 
 export interface SignalCandidate {
@@ -144,6 +149,11 @@ export interface CalibrationBucket {
   brier: number | null
   mean_predicted: number | null
   mean_realized: number | null
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
 }
 
 export interface PnlCalibration {
