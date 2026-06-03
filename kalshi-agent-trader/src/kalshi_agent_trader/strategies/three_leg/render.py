@@ -37,7 +37,7 @@ def _plan_panel(plan: ThreeLegPlan, params: ThreeLegParams) -> Panel:
     g = "men" if plan.gender == "men" else "women"
     legs_tbl = Table(box=None, pad_edge=False, show_edge=False)
     for col, just in [("Leg", "left"), ("Ask", "right"), ("Mkt", "right"),
-                      ("Fair", "right"), ("Kelly", "right"), ("Ct", "right"), ("Cost", "right")]:
+                      ("Fair", "right"), ("K/Hdg%", "right"), ("Ct", "right"), ("Cost", "right")]:
         legs_tbl.add_column(col, justify=just)
     all_legs = [plan.match_leg] + ([plan.title_leg] if plan.title_leg else []) + plan.long_legs
     _leg_rows(legs_tbl, all_legs)
@@ -72,6 +72,71 @@ def _plan_panel(plan: ThreeLegPlan, params: ThreeLegParams) -> Panel:
                  title=title, title_align="left", border_style="dim")
 
 
+def _spread_pnl(plan: ThreeLegPlan, *, won_match: bool, won_title: bool) -> Decimal:
+    """P&L of the match+title spread ALONE (no length hedge cost or payoff)."""
+    cost = plan.match_leg.cost + (plan.title_leg.cost if plan.title_leg else D("0"))
+    pay = D("0")
+    if won_match:
+        pay += D(plan.match_leg.contracts)
+        if won_title and plan.title_leg:
+            pay += D(plan.title_leg.contracts)
+    return pay - cost
+
+
+def _long_label(plan: ThreeLegPlan, o) -> str:
+    """e.g. 'wins 3-2 · 5 sets' for the full-distance outcome."""
+    won = 2 if plan.gender == "women" else 3
+    return f"wins {won}-{o.sets_lost} · {won + o.sets_lost} sets"
+
+
+def build_scenario_summary(plans: List[ThreeLegPlan]) -> Panel:
+    """Per player: line 1 = the match+title spread by terminal scenario; line 2 =
+    the FULL position (spread + length hedge) if the match goes the distance."""
+    tbl = Table(box=None, pad_edge=False, show_edge=False)
+    for col, just in [("Player", "left"), ("Position", "left"),
+                      ("Loses match", "right"), ("Wins, no title", "right"),
+                      ("Wins title", "right")]:
+        tbl.add_column(col, justify=just)
+
+    actionable = [p for p in plans if p.actionable]
+    for i, p in enumerate(actionable):
+        wins = [o for o in p.outcomes if o.is_win]
+        loses = [o for o in p.outcomes if not o.is_win]
+        if not wins:
+            continue
+        wt = lambda val: _fmt_signed_money(val) if p.title_leg else "—"
+
+        # Line 1 — directional spread only.
+        tbl.add_row(
+            f"[bold]{p.name}[/bold]", "spread (match+title)",
+            _fmt_signed_money(_spread_pnl(p, won_match=False, won_title=False)),
+            _fmt_signed_money(_spread_pnl(p, won_match=True, won_title=False)),
+            wt(_spread_pnl(p, won_match=True, won_title=True)))
+
+        # Line 2 — full position incl. length hedge, in the full-distance result.
+        long_win = max(wins, key=lambda o: o.sets_lost)
+        if p.long_legs and long_win.sets_lost > 0:
+            long_lose = max(loses, key=lambda o: o.sets_lost) if loses else None
+            hedge_cost = sum((leg.cost for leg in p.long_legs), D("0"))
+            tbl.add_row(
+                "", f"+ hedge ({_fmt_money(hedge_cost)}) · {_long_label(p, long_win)}",
+                _fmt_signed_money(p.net_pnl(long_lose, title_win=False)) if long_lose else "—",
+                _fmt_signed_money(p.net_pnl(long_win, title_win=False)),
+                wt(p.net_pnl(long_win, title_win=True)))
+        else:
+            tbl.add_row("", "[dim]+ hedge: none (no length market / no title)[/dim]",
+                        "", "", "")
+        if i < len(actionable) - 1:
+            tbl.add_row("", "", "", "", "")
+
+    cap = ("[dim]Line 1 is the match+title spread by itself. Line 2 adds the length hedge "
+           "and shows the full position when the match goes the distance (5 sets men / 3 sets "
+           "women): the hedge pays, trading a little give-back on a quick win for a cushion on "
+           "a tiring one. Women's opponent-set legs also pay in a 3-set loss.[/dim]")
+    return Panel(Group(tbl, cap), title="Scenario P&L — spread, then + length hedge",
+                 title_align="left", border_style="dim")
+
+
 def build_three_leg_view(
     plans: List[ThreeLegPlan], params: ThreeLegParams, *, status: Optional[str] = None,
 ) -> Group:
@@ -79,10 +144,10 @@ def build_three_leg_view(
         f"Bankroll {_fmt_money(params.bankroll, 0)} • {params.kelly_fraction}×Kelly • "
         f"fatigue_coef {params.fatigue_coef} • rest {params.rest_days}d • "
         f"match_edge {params.match_edge} • title_edge {params.title_edge}   •   "
-        "Leg1 match YES, Leg2 title YES, Leg3 = wins-but-LONG (fatigue hedge, "
-        "φ = coef·extra_sets/rest_days added to its fair).   •   "
-        "[yellow]Legs size 0 at market without an edge — pass --match-edge/--title-edge "
-        "for directional legs; the length hedge carries its own φ edge.[/yellow]"
+        "Leg1 match YES, Leg2 title YES, Leg3 = wins-but-LONG (fatigue HEDGE, "
+        "sized to ρ = clamp(coef·extra_sets/rest_days,0,1) × the title position).   •   "
+        "[yellow]Match/title size 0 at market without an edge — pass --match-edge/--title-edge. "
+        "No title position ⇒ no hedge (K/Hdg% shows the hedge ratio for length legs).[/yellow]"
     )
     header = _new_table("French Open — three-leg fatigue-hedge planner", legend, status)
     header.add_column("")
@@ -90,4 +155,5 @@ def build_three_leg_view(
     header.add_row(f"{len(actionable)} actionable of {len(plans)} favourites screened")
     panels = [_plan_panel(p, params) for p in plans] or [
         Panel("[dim]no open matches with a priced favourite[/dim]", border_style="dim")]
-    return Group(header, *panels)
+    summary = [build_scenario_summary(plans)] if any(p.actionable for p in plans) else []
+    return Group(header, *summary, *panels)

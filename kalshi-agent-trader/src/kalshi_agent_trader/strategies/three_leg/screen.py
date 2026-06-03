@@ -21,7 +21,7 @@ from ...tennis_screen import (
 )
 from . import length
 from .compute import (
-    Leg, Outcome, ThreeLegPlan, fatigue_premium, size_leg,
+    Leg, Outcome, ThreeLegPlan, hedge_ratio, size_hedge_leg, size_leg,
 )
 
 D = Decimal
@@ -125,33 +125,23 @@ def _plan_for(
                 kelly_fraction_cap=params.kelly_fraction,
             )
 
-    # Leg 3 — length hedge: one Kelly leg per long win-score, fatigue-boosted.
+    # Leg 3 — length hedge: size each leg as a turnaround-weighted FRACTION of the
+    # title position it protects (true hedge, not a directional bet).
+    title_contracts = title_leg.contracts if title_leg else 0
     candidates, note = length.discover(md, fav, name)
-    long_legs: List[Leg] = []
-    outcomes: List[Outcome] = [
-        Outcome(label="loses QF", prob=ONE - match_fair, is_win=False, sets_lost=0)
-    ]
     if candidates:
-        for c in candidates:
-            leg3_contracts = ZERO
-            if c.sets_lost >= 1:  # a long win → a hedge leg
-                phi = fatigue_premium(params.fatigue_coef, c.sets_lost, params.rest_days)
-                leg = size_leg(
-                    f"win {c.score_label}", c.ticker, price=c.yes_ask,
-                    market_fair=c.devig_prob, fatigue=phi, extra_sets=c.sets_lost,
-                    bankroll=params.bankroll, kelly_fraction_cap=params.kelly_fraction,
-                )
-                long_legs.append(leg)
-                leg3_contracts = D(leg.contracts)
-            outcomes.append(Outcome(
-                label=f"wins {c.score_label}", prob=c.devig_prob, is_win=True,
-                sets_lost=c.sets_lost, leg3_pay=leg3_contracts,
-            ))
+        long_legs, outcomes = _exact_score_legs(candidates, match_fair, title_contracts, params)
     else:
-        # No length market yet: trade legs 1-2 now, flag the hedge as pending so it
-        # can be added when the exact-score market lists (re-run at match-live time).
-        outcomes.append(Outcome(
-            label="wins QF", prob=match_fair, is_win=True, sets_lost=0))
+        # No exact-score market. Best-of-3 (women): proxy length with set-winner legs.
+        set_cands, set_note = length.discover_set_hedge(md, fav, name)
+        if len(set_cands) >= 2:
+            long_legs, outcomes = _set_hedge_legs(set_cands, title_contracts, params)
+            note = set_note
+        else:
+            long_legs, outcomes, note = [], [
+                Outcome(label="loses QF", prob=ONE - match_fair, is_win=False, sets_lost=0),
+                Outcome(label="wins QF", prob=match_fair, is_win=True, sets_lost=0),
+            ], (set_note or note)
 
     return ThreeLegPlan(
         name=name, gender=gender, rest_days=params.rest_days,
@@ -159,3 +149,57 @@ def _plan_for(
         outcomes=outcomes, note=note,
         pending_hedge_event=(length.exact_event_for(fav) if not long_legs else None),
     )
+
+
+def _exact_score_legs(
+    candidates, match_fair: Decimal, title_contracts: int, params: ThreeLegParams,
+) -> tuple[List[Leg], List[Outcome]]:
+    """Best-of-5 (men): one hedge leg per long win-score (3-1, 3-2)."""
+    long_legs: List[Leg] = []
+    outcomes: List[Outcome] = [
+        Outcome(label="loses QF", prob=ONE - match_fair, is_win=False, sets_lost=0)]
+    for c in candidates:
+        leg3_contracts = ZERO
+        if c.sets_lost >= 1:  # a long win → a hedge leg
+            ratio = hedge_ratio(params.fatigue_coef, c.sets_lost, params.rest_days)
+            leg = size_hedge_leg(
+                f"win {c.score_label}", c.ticker, price=c.yes_ask,
+                market_fair=c.devig_prob, ratio=ratio,
+                title_contracts=title_contracts, extra_sets=c.sets_lost)
+            long_legs.append(leg)
+            leg3_contracts = D(leg.contracts)
+        outcomes.append(Outcome(
+            label=f"wins {c.score_label}", prob=c.devig_prob, is_win=True,
+            sets_lost=c.sets_lost, leg3_pay=leg3_contracts))
+    return long_legs, outcomes
+
+
+def _set_hedge_legs(
+    set_cands, title_contracts: int, params: ThreeLegParams,
+) -> tuple[List[Leg], List[Outcome]]:
+    """Best-of-3 (women): a drained win = a 3-setter = F dropped set 1 or set 2.
+
+    Split the hedge ratio ρ (one extra set) across the opponent's Set-1/Set-2 YES
+    legs. Each opp-set leg pays $1 when F drops that set, so exactly one pays in any
+    3-set match (wins-2-1 or loses-1-2) and both pay if F loses 0-2.
+    """
+    ratio = hedge_ratio(params.fatigue_coef, 1, params.rest_days) / D(len(set_cands))
+    long_legs = [
+        size_hedge_leg(
+            f"opp set {c.set_no}", c.ticker, price=c.yes_ask,
+            market_fair=ONE - c.fav_set_prob, ratio=ratio,
+            title_contracts=title_contracts, extra_sets=1)
+        for c in set_cands
+    ]
+    h = D(long_legs[0].contracts)                       # equal contracts per set leg
+    q1, q2 = set_cands[0].fav_set_prob, set_cands[1].fav_set_prob
+    q = (q1 + q2) / D("2")                              # deciding-set strength
+    split = q1 * (ONE - q2) + (ONE - q1) * q2           # P(first two sets split → 3 sets)
+    outcomes = [
+        Outcome(label="wins 2-0", prob=q1 * q2, is_win=True, sets_lost=0, leg3_pay=ZERO),
+        Outcome(label="wins 2-1", prob=split * q, is_win=True, sets_lost=1, leg3_pay=h),
+        Outcome(label="loses 1-2", prob=split * (ONE - q), is_win=False, sets_lost=1, leg3_pay=h),
+        Outcome(label="loses 0-2", prob=(ONE - q1) * (ONE - q2), is_win=False, sets_lost=0,
+                leg3_pay=h * D("2")),
+    ]
+    return long_legs, outcomes

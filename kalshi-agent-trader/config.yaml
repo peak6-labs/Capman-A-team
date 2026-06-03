@@ -43,7 +43,7 @@ compliance:
 # ---------------------------------------------------------------------------
 risk:
   dry_run: false
-  max_total_exposure_usd: 20.0
+  max_total_exposure_usd: 100.0
   max_per_position_usd: 5.0
   max_contracts_per_order: 10
   daily_loss_cap_usd: 10.0

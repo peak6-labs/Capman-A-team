@@ -149,7 +149,9 @@ def test_build_plan_picks_favourite_and_three_legs():
 
 
 def test_short_turnaround_upsizes_hedge():
-    base = dict(bankroll=D("100"), kelly_fraction=D("0.5"), fatigue_coef=D("0.20"))
+    # A title position must exist for there to be anything to hedge.
+    base = dict(bankroll=D("100"), kelly_fraction=D("0.5"), fatigue_coef=D("0.20"),
+                title_edge=D("0.10"))
     p1 = build_plans(_md(), gender="men", players=None,
                      params=ThreeLegParams(rest_days=1, **base))[0]
     p2 = build_plans(_md(), gender="men", players=None,
@@ -159,6 +161,30 @@ def test_short_turnaround_upsizes_hedge():
         return sum(leg.contracts for leg in plan.long_legs)
 
     assert hedge_contracts(p1) > hedge_contracts(p2)      # 1-day rest ⇒ bigger hedge
+
+
+def test_hedge_sized_as_fraction_of_title_position():
+    """Long-win contracts = round(title_contracts · clamped fatigue ratio)."""
+    params = ThreeLegParams(bankroll=D("100"), kelly_fraction=D("0.5"),
+                            fatigue_coef=D("0.20"), rest_days=1,
+                            match_edge=D("0.10"), title_edge=D("0.10"))
+    p = build_plans(_md(), gender="men", players=None, params=params)[0]
+    title_ct = p.title_leg.contracts
+    by_score = {leg.label: leg for leg in p.long_legs}
+    # 3-1: extra_sets=1, ρ = 0.20·1/1 = 0.20 ; 3-2: extra_sets=2, ρ = 0.40
+    assert by_score["win 3-1"].contracts == round(title_ct * 0.20)
+    assert by_score["win 3-2"].contracts == round(title_ct * 0.40)
+    # hedge legs carry NO fabricated edge: fair stays at the market prob.
+    assert all(leg.fair == leg.market_fair for leg in p.long_legs)
+
+
+def test_no_title_position_means_no_hedge():
+    """With no title conviction (title leg sizes 0), the hedge is 0 — no naked duration bet."""
+    params = ThreeLegParams(bankroll=D("100"), kelly_fraction=D("0.5"),
+                            fatigue_coef=D("0.20"), rest_days=1, match_edge=D("0.10"))
+    p = build_plans(_md(), gender="men", players=None, params=params)[0]
+    assert p.title_leg.contracts == 0
+    assert all(leg.contracts == 0 for leg in p.long_legs)
 
 
 def test_net_pnl_outcomes():

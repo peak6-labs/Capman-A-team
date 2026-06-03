@@ -15,13 +15,22 @@ Each leg is sized by FRACTIONAL KELLY on a fair probability vs the ask:
     contracts = floor(stake / price)
 
 Legs 1 & 2 take their fair from the de-vigged market mid plus an optional
-directional `edge` you supply (0 ⇒ no bet at market — honest Kelly). Leg 3's
-fair is the de-vigged long-win prob plus a TURNAROUND-WEIGHTED fatigue premium:
+directional `edge` you supply (0 ⇒ no bet at market — honest Kelly).
 
-    φ = fatigue_coef · extra_sets / rest_days
+Leg 3 is sized as a TRUE HEDGE, not a directional bet: the long-win contracts
+offset the title value you expect to lose if F advances drained. We hedge a
+turnaround-weighted FRACTION of the title position:
 
-so a short QF→SF turnaround (few rest days) *upsizes* the hedge. `extra_sets` is
-the sets beyond a sweep the score implies (3-1 → 1, 3-2 → 2, women 2-1 → 1).
+    ρ = clamp(fatigue_coef · extra_sets / rest_days, 0, 1)      # hedge ratio
+    long_contracts = round(title_contracts · ρ)
+
+so the hedge scales with (a) how much title you actually hold, (b) how long the
+win was (`extra_sets` = sets beyond a sweep: 3-1 → 1, 3-2 → 2, women 2-1 → 1),
+and (c) how short the QF→SF turnaround is (few rest days ⇒ bigger ρ). With no
+title leg there is nothing to hedge, so ρ·0 = 0 contracts — the structure
+refuses to place a naked duration bet. `fatigue_coef` now reads as "points of
+conditional title probability lost per extra set per rest-day" (the share of
+each title contract a long win puts at risk), NOT a market mispricing.
 
 This module is pure: no I/O, all Decimal, caller formats/rounds.
 """
@@ -29,7 +38,7 @@ This module is pure: no I/O, all Decimal, caller formats/rounds.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import List, Optional
 
 D = Decimal
@@ -50,12 +59,21 @@ def kelly_fraction(fair: Decimal, price: Decimal) -> Decimal:
 
 
 def fatigue_premium(fatigue_coef: Decimal, extra_sets: int, rest_days: int) -> Decimal:
-    """Probability points added to a long-win leg's fair for short turnaround.
+    """Turnaround-weighted fatigue factor: coef · extra_sets / rest_days.
 
-    φ = coef · extra_sets / rest_days. rest_days is floored at 1 (same-day = max).
+    rest_days is floored at 1 (same-day = max). Used as the raw hedge ratio
+    before clamping (see `hedge_ratio`).
     """
     rd = max(1, int(rest_days))
     return fatigue_coef * D(extra_sets) / D(rd)
+
+
+def hedge_ratio(fatigue_coef: Decimal, extra_sets: int, rest_days: int) -> Decimal:
+    """Fraction of the title position to hedge with a long-win leg, clamped [0, 1]."""
+    r = fatigue_premium(fatigue_coef, extra_sets, rest_days)
+    if r <= ZERO:
+        return ZERO
+    return r if r < ONE else ONE
 
 
 @dataclass(frozen=True)
@@ -105,6 +123,31 @@ def size_leg(
     )
 
 
+def size_hedge_leg(
+    label: str,
+    ticker: str,
+    *,
+    price: Decimal,
+    market_fair: Decimal,
+    ratio: Decimal,
+    title_contracts: int,
+    extra_sets: int,
+) -> Leg:
+    """Size a long-win HEDGE leg to a fraction `ratio` of the title position.
+
+    contracts = round(title_contracts · ratio). The leg carries no fabricated
+    edge: its `fair` stays at the de-vigged market prob (we're buying insurance,
+    not alpha). `kelly_f` holds the hedge ratio so the renderer can show it.
+    """
+    contracts = int((D(title_contracts) * ratio).to_integral_value(rounding=ROUND_HALF_UP))
+    contracts = max(0, contracts)
+    return Leg(
+        label=label, ticker=ticker, price=price, market_fair=market_fair,
+        fair=market_fair, kelly_f=ratio, stake=D(contracts) * price,
+        contracts=contracts, extra_sets=extra_sets,
+    )
+
+
 @dataclass(frozen=True)
 class Outcome:
     """One terminal QF result and how the legs pay (in contract units)."""
@@ -145,11 +188,15 @@ class ThreeLegPlan:
             or any(leg.sized for leg in self.long_legs)
 
     def net_pnl(self, outcome: Outcome, *, title_win: bool) -> Decimal:
-        """Net $ P&L in this QF result, optionally if F then wins the title."""
-        payoff = ZERO
+        """Net $ P&L in this QF result, optionally if F then wins the title.
+
+        The length/set hedge (`leg3_pay`) settles on its OWN trigger, so it can
+        pay even when F loses the match — e.g. a women's set-winner hedge that
+        cashes because F dropped a set. Match/title legs need F to win.
+        """
+        payoff = outcome.leg3_pay                        # hedge settles on its own trigger
         if outcome.is_win:
             payoff += D(self.match_leg.contracts)        # Leg 1 settles on a QF win
-            payoff += outcome.leg3_pay                   # the matching length leg
             if title_win and self.title_leg:
                 payoff += D(self.title_leg.contracts)    # Leg 2 settles on a title
         return payoff - self.total_cost
