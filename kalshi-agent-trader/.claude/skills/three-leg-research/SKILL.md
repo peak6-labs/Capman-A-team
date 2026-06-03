@@ -23,6 +23,10 @@ turnaround-weighted fraction ρ of the title position, so **no title ⇒ no hedg
 
 ## Steps
 
+> **Context loading** — load only what you need, when you need it. Start with the single
+> candidate snapshot; don't pre-load all markets or events. Use web search only after you
+> have the player's name and QF date in hand.
+
 1. **Snapshot the live book (read-only).**
    ```bash
    kalshi-trader three-leg --json                       # all QFs, both genders
@@ -67,3 +71,33 @@ turnaround-weighted fraction ρ of the title position, so **no title ⇒ no hedg
 A short written verdict to the user — GO or NO-GO, the candidate, the one-line edge claim
 (or "flat, as priors predicted"), and the ticket path. If GO, tell them they can hand the
 ticket to the **executor** agent. Never place anything yourself.
+
+## Canonical examples
+
+**GO — Swiatek, RG 2026 QF (1-day turnaround)**
+```
+Leg 1  SWIATEK-26-QF-YES   ask $0.71  fair $0.76  edge +0.05  7 contracts  cost $4.97
+Leg 2  SWIATEK-TITLE-YES   ask $0.38  fair $0.44  edge +0.06  3 contracts  cost $1.14
+Leg 3  OPPONENT-SET-YES    ask $0.29  ρ=0.20      hedge       2 contracts  cost $0.58
+
+EV by outcome:
+  wins straight (prob 0.61):  +$1.73
+  wins long     (prob 0.14):  +$0.95
+  loses         (prob 0.25):  −$6.69
+ev_usd: +$0.38  (after 7% fees, half-Kelly)
+
+Verdict: GO — market underprices Swiatek's title given confirmed 5¢ match edge and
+1-day QF→SF turnaround. Ticket: research/tickets/2026-06-03-swiatek.md
+```
+
+**NO-GO — Zverev, RG 2026 QF**
+```
+Leg 1  ZVEREV-26-QF-YES    ask $0.62  fair $0.63  edge +0.01  0 contracts  (no edge)
+Leg 2  ZVEREV-TITLE-YES    ask $0.08  fair $0.06  edge −0.02  0 contracts  (wrong side FSB)
+Leg 3  (no title position → no hedge)
+
+ev_usd: $0.00
+
+Verdict: NO-GO — no match edge; title ask is on the wrong side of the favourite-longshot
+bias (market overprices a sub-10¢ longshot). Flat, as priors predicted.
+```

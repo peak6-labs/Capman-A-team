@@ -49,6 +49,8 @@ path (`three-leg --execute`, `order`, `cancel`) is the executor's, always gated.
 - The research agent's default verdict is NO-GO; a GO must name a specific edge.
 - The executor never places live without explicit per-ticket human confirmation, and
   refuses stale or price-drifted tickets rather than "fixing" them.
+- Sizing knobs (`kelly_fraction`, `fatigue_coef`, `rest_days`) are documented in
+  `docs/TUNING.md`. Change them in `config.yaml`; never hardcode them in prompts.
 
 ## Map
 - Agents: `.claude/agents/research-analyst.md`, `.claude/agents/executor.md`

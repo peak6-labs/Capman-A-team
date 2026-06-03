@@ -48,6 +48,14 @@ and any **risk-cap clamp** (the risk gate treats a hedge as added gross exposure
 shrink it — report the clamp honestly, never route around it). Then summarise the
 resulting position and any deferred hedge leg.
 
+### Example
+```
+Leg 1 (match YES):    DRY-RUN  — 7 contracts @ $0.71 = $4.97
+Leg 2 (title YES):    DRY-RUN  — 3 contracts @ $0.38 = $1.14
+Leg 3 (length hedge): REJECTED — risk gate clamped to 0 (gross exposure cap)
+Position: +7 SWIATEK-26-QF-YES, +3 SWIATEK-TITLE-YES | Hedge: pending (clamped)
+```
+
 ## After a fill
 If a live position later needs protecting or unwinding, use the **`find-hedge`** skill —
 it compares every hedge against simply exiting. Do not improvise a hedge from here.
