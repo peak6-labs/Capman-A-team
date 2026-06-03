@@ -1,5 +1,22 @@
 import { useEffect, useState } from 'react'
-import { getControlStatus, setKillSwitch, setDryRun, type ControlStatus } from '../api'
+import { getControlStatus, setKillSwitch, setDryRun, getSignals, type ControlStatus, type SignalsResponse } from '../api'
+import { parseTicker } from '../tickerUtils'
+
+function SideBadge({ side }: { side: string }) {
+  const isYes = side.toLowerCase() === 'yes'
+  return <span className={`side-badge ${isYes ? 'yes' : 'no'}`}>{side.toUpperCase()}</span>
+}
+
+function MarketCell({ ticker, title }: { ticker: string; title: string }) {
+  const { label, detail } = parseTicker(ticker)
+  const display = label !== ticker ? label : title
+  return (
+    <div>
+      <div style={{ fontWeight: 500, fontSize: '0.8125rem' }}>{display}</div>
+      {detail && <div className="muted" style={{ marginTop: 2 }}>{detail}</div>}
+    </div>
+  )
+}
 
 export default function Control() {
   const [status, setStatus] = useState<ControlStatus | null>(null)
@@ -7,6 +24,10 @@ export default function Control() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+
+  const [signals, setSignals] = useState<SignalsResponse | null>(null)
+  const [signalsLoading, setSignalsLoading] = useState(false)
+  const [signalsError, setSignalsError] = useState<string | null>(null)
 
   const refresh = () => {
     setLoading(true)
@@ -16,10 +37,22 @@ export default function Control() {
       .finally(() => setLoading(false))
   }
 
+  const loadSignals = () => {
+    setSignalsLoading(true)
+    getSignals()
+      .then(s => { setSignals(s); setSignalsError(null) })
+      .catch(e => setSignalsError(String(e)))
+      .finally(() => setSignalsLoading(false))
+  }
+
   useEffect(() => {
     refresh()
     const id = setInterval(refresh, 30_000)
     return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    loadSignals()
   }, [])
 
   const toggleKill = async () => {
@@ -139,6 +172,66 @@ export default function Control() {
           </div>
         </>
       )}
+
+      {/* Live Agent Queue */}
+      <div className="card" style={{ marginTop: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+          <h2 style={{ margin: 0 }}>
+            Live Agent Queue
+            {signals && (
+              <span className="muted" style={{ fontWeight: 400, fontSize: '0.875rem', marginLeft: '0.5rem' }}>
+                · {signals.candidates.length} candidates from {signals.total_scanned} scanned
+              </span>
+            )}
+          </h2>
+          <button className="btn btn-gray" onClick={loadSignals} disabled={signalsLoading} style={{ fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}>
+            {signalsLoading ? <span className="spinner" /> : 'Scan now'}
+          </button>
+        </div>
+
+        {signalsError && <p className="error">{signalsError}</p>}
+
+        {signalsLoading && !signals ? (
+          <p className="muted">Scanning markets…</p>
+        ) : signals && signals.candidates.length === 0 ? (
+          <p className="muted">No candidates found matching cheap-tail criteria (1–10¢, 4–48h expiry).</p>
+        ) : signals ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Market</th>
+                <th>Category</th>
+                <th>Side</th>
+                <th>Price</th>
+                <th>Spread</th>
+                <th>Score</th>
+                <th>Expires</th>
+                <th>Volume</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signals.candidates.map((c, i) => (
+                <tr key={i}>
+                  <td><MarketCell ticker={c.ticker} title={c.title} /></td>
+                  <td><span className="badge badge-gray">{c.category ?? '—'}</span></td>
+                  <td><SideBadge side={c.side} /></td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{(parseFloat(c.price) * 100).toFixed(1)}¢</td>
+                  <td className="muted" style={{ fontVariantNumeric: 'tabular-nums' }}>{(parseFloat(c.spread) * 100).toFixed(1)}¢</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{c.score.toFixed(3)}</td>
+                  <td className="muted">{c.hours_to_expiry}h</td>
+                  <td className="muted">{c.volume_fp.toFixed(0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+
+        {signals && (
+          <p className="muted" style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}>
+            Score = price × hours. Cached 60s. Results pass compliance + liquidity + time filters.
+          </p>
+        )}
+      </div>
     </div>
   )
 }

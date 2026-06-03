@@ -20,6 +20,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export const getControlStatus = () => get<ControlStatus>('/control/status')
 export const setKillSwitch = (engaged: boolean) => post<{ kill_switch_engaged: boolean }>('/control/kill', { engaged })
 export const setDryRun = (dry_run: boolean) => post<{ dry_run: boolean }>('/control/dry-run', { dry_run })
+export const getSignals = (limit = 10) => get<SignalsResponse>(`/control/signals?limit=${limit}`)
 
 // Portfolio
 export const getPortfolio = () => get<PortfolioResponse>('/portfolio')
@@ -39,6 +40,24 @@ export interface ControlStatus {
   dry_run: boolean
   exchange: Record<string, unknown>
   auth: { credentials_present: boolean; auth_ok: boolean; error: string | null }
+}
+
+export interface SignalCandidate {
+  ticker: string
+  title: string
+  category: string | null
+  side: 'yes' | 'no'
+  price: string
+  spread: string
+  score: number
+  hours_to_expiry: number
+  volume_fp: number
+}
+
+export interface SignalsResponse {
+  scanned_at: number
+  total_scanned: number
+  candidates: SignalCandidate[]
 }
 
 export interface Position {
