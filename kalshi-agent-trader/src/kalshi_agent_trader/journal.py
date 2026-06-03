@@ -281,24 +281,6 @@ class Journal:
             )
         )
 
-    def closed_positions(self) -> list[sqlite3.Row]:
-        return list(
-            self._conn.execute(
-                "SELECT * FROM positions WHERE status IN ('closed', 'resolved') ORDER BY id"
-            )
-        )
-
-    def decisions_for_ticker(self, market_ticker: str) -> list[sqlite3.Row]:
-        """All placed/dry_run decisions for a ticker, oldest first (for fair_prob recovery)."""
-        return list(
-            self._conn.execute(
-                """SELECT * FROM decisions
-                   WHERE market_ticker = ? AND outcome IN ('placed', 'dry_run')
-                   ORDER BY ts""",
-                (market_ticker,),
-            )
-        )
-
     def close_position(self, position_id: int, reason: str) -> None:
         self._conn.execute(
             "UPDATE positions SET status = 'closed', closed_ts = ?, close_reason = ? WHERE id = ?",

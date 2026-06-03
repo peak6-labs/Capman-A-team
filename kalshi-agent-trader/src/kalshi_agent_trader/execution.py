@@ -46,8 +46,6 @@ def build_v2_order_body(order: ProposedOrder, client_order_id: str) -> Dict[str,
 
     `book_side` is from the orderbook's perspective: buying YES or selling NO
     joins/crosses the bid side; selling YES or buying NO joins/crosses the ask side.
-    `post_only` makes eligible orders maker-only: Kalshi cancels if they would
-    cross the book.
     """
     side = order.side.lower()
     action = order.action.lower()
@@ -57,7 +55,7 @@ def build_v2_order_body(order: ProposedOrder, client_order_id: str) -> Dict[str,
         raise ValueError(f"unsupported action: {order.action}")
 
     book_side = "bid" if (side == "yes") == (action == "buy") else "ask"
-    body = {
+    return {
         "ticker": order.ticker,
         "client_order_id": client_order_id,
         "side": book_side,
@@ -66,9 +64,6 @@ def build_v2_order_body(order: ProposedOrder, client_order_id: str) -> Dict[str,
         "time_in_force": "good_till_canceled",
         "self_trade_prevention_type": "taker_at_cross",
     }
-    if order.post_only:
-        body["post_only"] = True
-    return body
 
 
 class Executor:
@@ -166,7 +161,6 @@ class Executor:
             fair_prob=order.fair_prob,
             confidence=order.confidence,
             max_contracts=order.count,
-            rationale=order.rationale,
             gate=gate,
             reason=reason,
         )

@@ -74,12 +74,6 @@ def test_build_v2_body_sell_no_is_bid():
     assert build_v2_order_body(_order(side="no", action="sell"), "cid")["side"] == "bid"
 
 
-def test_post_only_flag_in_body_only_when_set():
-    # default (taker) order omits post_only; maker order carries it.
-    assert "post_only" not in build_v2_order_body(_order(), "cid")
-    assert build_v2_order_body(_order(post_only=True), "cid")["post_only"] is True
-
-
 def test_compliance_blocks_before_risk(tmp_path):
     ex, client = _executor(tmp_path)
     res = ex.submit(_order(), category="Financials", title="x", account=_account())

@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from kalshi_agent_trader.config import load_config
 from kalshi_agent_trader.client import KalshiClient
 from kalshi_agent_trader.market_data import MarketData
-from kalshi_agent_trader.reversion import DipParams
-from kalshi_agent_trader.dip_backtest import Bar, replay_episode, aggregate
+from kalshi_agent_trader.strategies.dip_reversion.detector import DipParams
+from kalshi_agent_trader.strategies.dip_reversion.backtest import Bar, replay_episode, aggregate
 
 FO_START = sys.argv[1] if len(sys.argv) > 1 else "2026-05-24"
 WINDOW_H = int(sys.argv[2]) if len(sys.argv) > 2 else 10

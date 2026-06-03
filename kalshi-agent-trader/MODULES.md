@@ -19,31 +19,30 @@ uv run kalshi-trader <command>
 | `markets` | No | List open markets |
 | `events` | No | List events with categories |
 | `orderbook <TICKER>` | No | Show order book |
-| `order [--dry-run/--no-dry-run]` | Yes | Place one order manually |
+| `order` | Yes | Place one order manually (dry-run by default) |
 | `cancel <ORDER_ID>` | Yes | Cancel a resting order |
 | `kill` / `unkill` | — | Engage/clear the kill switch |
-| `scan` | No | Run scanner, print candidates table |
-| `run [--dry-run/--no-dry-run]` | Yes | Full scan → brain → execute cycle |
-| `rv-run [--dry-run/--no-dry-run]` | Yes | Relative-value scan → execute cycle |
-| `monitor [--once] [--dry-run/--no-dry-run]` | Yes | Poll open positions and close on exit triggers |
-| `agent-scan` | Yes | Claude finds opportunities (dry mode) |
-| `agent-run [--dry-run/--no-dry-run]` | Yes | Agent-enhanced scan → evaluate → execute |
-| `breakeven` | No | French Open two-market hedge/fade screener |
-| `dip [--execute] [--dry-run/--no-dry-run]` | No/Yes | Intraday title-dip screener; optionally route orders |
+| `three-leg` | No* | Screen QF favourites for the three-leg hedge. `--json` = snapshot for the research agent; `--execute` routes legs through the gates (*auth only when actually executing) |
+| `hedge` | Yes | Post-fill: exit-vs-hedge for an open match position (places nothing) |
+
+> Exploratory commands (`scan`, `run`, `rv-scan`, `rv-run`, `monitor`, `agent-scan`,
+> `agent-run`, `breakeven`, `dip`) were retired with their modules to `attic/`.
+
+## Agents & skills (the prompt layer)
+
+The research/executor split lives in prompts, not Python — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+| File | Role |
+|---|---|
+| `.claude/agents/research-analyst.md` | PROPOSE — screen, re-confirm edge, write a GO/NO-GO trade ticket |
+| `.claude/agents/executor.md` | DISPOSE — validate a ticket, run the gate chain, dry-run first |
+| `.claude/skills/three-leg-research/` | Research playbook + edge checklist + ticket rubric |
+| `.claude/skills/three-leg-execute/` | Execution playbook: drift/staleness check, confirmation gate |
+| `.claude/skills/find-hedge/` | Post-fill de-risk playbook |
+| `research/tickets/TEMPLATE.md` | The trade-ticket contract between the two agents |
 
 ---
-
-Execution commands default to `risk.dry_run` from `config.yaml`. Use `--dry-run`
-to force simulation for a test run, or `--no-dry-run` to allow real orders for
-that invocation. `--live` remains as an alias for `--no-dry-run`.
-
-```bash
-uv run kalshi-trader run --dry-run
-uv run kalshi-trader rv-run --dry-run
-uv run kalshi-trader agent-run --dry-run
-uv run kalshi-trader dip --execute --dry-run
-uv run kalshi-trader order <TICKER> --side yes --price 0.10 --count 1 --dry-run
-```
 
 ## Source Files
 
@@ -117,7 +116,24 @@ Authenticated reads: balance, market positions, resting orders, fills.
 
 ---
 
-### Phase 4 — Systematic Strategy
+### Three-leg fatigue-hedge strategy (the committed strategy)
+
+**`strategies/three_leg/`** — `compute.py` (pure sizing/P&L: de-vig, Kelly, hedge-ratio,
+EV by outcome), `screen.py` (assemble plans from the live book; pair title by competitor
+UUID; turnaround-weighted hedge), `length.py` (discover exact-score / set-winner hedge
+legs), `orders.py` (plan → orders), `render.py` (Rich view + `build_three_leg_json`),
+`runner.py` (fetch → size → render/JSON → optional gated execute). Driven by the
+`three-leg` CLI command and the research/executor agents.
+
+**`tennis_screen.py`** / **`breakeven.py`** — shared tennis infra the three-leg screen
+depends on (series constants, competitor pairing, de-vig + breakeven fee math).
+
+---
+
+> **Archived (Phase 4/5 below).** The systematic longshot core and the generic LLM agent
+> were retired to `attic/` and are no longer wired into the package. Kept for reference.
+
+### Phase 4 — Systematic Strategy *(archived → `attic/`)*
 
 **`scanner.py`**
 Scans open markets for cheap-tail candidates.
@@ -129,13 +145,6 @@ Returns `List[ScanCandidate]` sorted by `price × hours` score.
 Fetches reference prices from Polymarket's public Gamma API.
 Matches by title similarity (`difflib`). Returns `None` if no confident match (< 0.50).
 Used by brain to cross-calibrate probability estimates.
-
-**`sportsbook_scrape.py`**
-Targeted sportsbook scraping for agent-proposed Kalshi trades only.
-Fetches explicitly configured DraftKings/FanDuel/etc. URLs per ticker, parses
-American odds near a configured outcome label, converts them to implied
-probability, and can blend/reject before Kalshi execution. It does not scan or
-poll sportsbook slates.
 
 **`brain.py`**
 Converts scan candidates into `ProposedOrder` objects.
@@ -157,46 +166,25 @@ Phase 6 will replace `run_loop` polling with WebSocket events.
 
 ---
 
-### Phase 5 — LLM Agents
+### Phase 5 — LLM Agents *(archived → `attic/agents/`)*
 
 **`agents/base.py`**
 Shared types: `Signal` (ticker, side, fair_prob, confidence, rationale) and `AgentError`.
 
-**`agents/scout_agent.py`**
-Cheap, high-volume triage tier (Haiku by default; rejects Sonnet models). Its misses are
-recoverable downstream, so a cheaper model is the right trade-off.
-- `find_opportunities(events)` — batches events; identifies mispriced tails
-- `find_market_opportunities(markets)` — triages live market snapshots, returns ≤12 signals
-
-**`agents/analyst_agent.py`**
-High-stakes per-candidate pricing tier (Sonnet-only guard).
+**`agents/market_agent.py`**
+Claude-powered scanner + analyst using `claude-sonnet-4-6`.
+- `find_opportunities(events)` — batches up to 50 events; Claude identifies mispriced tails
 - `evaluate(candidate, poly_ref)` — refines fair_prob for a single market
-- Fails closed: an empty model response returns a `watch` action (not a synthetic trade)
-
-**`agents/_signals.py`**
-Shared `submit_signals` tool schema, `parse_signal`, and the cached-system-prompt
-`call_agent` helper used by both agents. Structured output via tool use — no free-text parsing.
+- System prompt cached with `ephemeral` cache_control (shared across both methods)
+- Structured output via tool use — no free-text parsing
 
 **`agents/agent_strategy.py`**
-Agent-enhanced pipeline (model IDs from `config.models`):
+Agent-enhanced pipeline:
 1. Fetch open events (pre-filtered to allowed categories)
-2. Scout triages live market snapshots (`find_market_opportunities`)
+2. Claude scans for opportunities (`find_opportunities`)
 3. Each signal runs through compliance + scanner filters
-4. Analyst evaluates survivors with Polymarket reference (`evaluate`)
+4. Claude evaluates survivors with Polymarket reference (`evaluate`)
 5. Submit through compliance → risk → execution gate chain
-
-**`analysis/calibration.py`**
-Brier scoring of closed positions against Kalshi settlement (`Market.result`), bucketed by
-source and category. Recovers predicted `fair_prob` from the `decisions` journal. Read-only;
-surfaced via the `calibrate` CLI command.
-
----
-
-### Specialty Screens
-
-**`breakeven.py`** / **`tennis_screen.py`**
-French Open two-market hedge/fade screener. Pairs each player's current-match
-market with their tournament-winner market and shows breakeven prices for both strategies.
 
 ---
 
@@ -205,25 +193,19 @@ market with their tournament-winner market and shows breakeven prices for both s
 ```
 tests/
   test_auth.py          RSA-PSS header format
-  test_breakeven.py     Fee formula + scenario math
-  test_brain.py         Kelly math, probability blend, proposal caps
+  test_breakeven.py     Fee formula + scenario math (shared tennis infra)
   test_compliance.py    Category allowlist, keyword backstop
-  test_config.py        load_config(), Decimal coercion, require_kalshi(), models tier
-  test_agent_calibration.py  Brier scoring, settlement join, unsettled skip
+  test_config.py        load_config(), Decimal coercion, three_leg config
   test_execution.py     Gate ordering, dry-run, V2 body, live path
-  test_monitor.py       All four exit triggers
-  test_polymarket.py    Title matching, threshold, error handling
+  test_hedge.py         Exit-vs-hedge scoring
+  test_portfolio.py     Account-state assembly
   test_risk.py          All cap types, kill switch, size clamping
-  test_scanner.py       Filters, compliance rejection, side selection
-  test_sportsbook_scrape.py Targeted odds parsing + signal blending
   test_tennis_screen.py Player pairing, breakeven scenarios
-  agents/
-    test_scout_agent.py    Triage parsing, empty inputs, model guard, AgentError
-    test_analyst_agent.py  evaluate, Sonnet guard, fail-closed fallback, parse_signal
-    test_agent_strategy.py Quote/action helper math
+  test_three_leg.py     Kelly/hedge-ratio sizing, set-proxy, net P&L, EV
+  attic/                Tests for archived strategies (excluded from collection)
 ```
 
-**189 tests, all pass.**
+**80 tests, all pass.** (`pyproject.toml` excludes `tests/attic`.)
 
 ---
 

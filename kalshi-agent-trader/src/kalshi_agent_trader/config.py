@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -106,74 +106,37 @@ class StrategyConfig(BaseModel):
     stale_move_pct: float = 0.02
 
 
-class RelativeValueConfig(BaseModel):
-    """External-reference signal settings for Kalshi-only relative-value trading."""
+class ThreeLegConfig(BaseModel):
+    """Sizing + execution parameters for the three-leg fatigue-hedge strategy.
+
+    The canonical defaults the research agent screens with (`three-leg --json`)
+    live here, plus the executor's trade-ticket guards: a ticket older than
+    `ticket_max_age_min`, or whose match/title ask has drifted past the matching
+    `drift_tolerance_*`, is refused. These bands are copied into each ticket's
+    frontmatter so the executor's check is self-contained.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
-    enabled: bool = True
-    min_edge: Decimal = Decimal("0.025")
-    min_match_confidence: float = 0.75
-    max_signal_age_s: int = 30
-    max_spread: Decimal = Decimal("0.20")
-    max_markets: int = 200
-    max_signals: int = 10
-    order_count: int = 1
-    allowed_sources: List[str] = Field(default_factory=lambda: ["polymarket"])
+    bankroll_usd: Decimal = Decimal("100")
+    kelly_fraction: Decimal = Decimal("0.5")
+    fatigue_coef: Decimal = Decimal("0.20")
+    fee_rate: Decimal = Decimal("0.07")
+    rest_days: int = 1
+    # Executor staleness / drift guards (the trade-ticket contract).
+    ticket_max_age_min: int = 30
+    drift_tolerance_match: Decimal = Decimal("0.02")
+    drift_tolerance_title: Decimal = Decimal("0.03")
 
-    @field_validator("min_edge", "max_spread", mode="before")
+    @field_validator(
+        "bankroll_usd", "kelly_fraction", "fatigue_coef", "fee_rate",
+        "drift_tolerance_match", "drift_tolerance_title", mode="before",
+    )
     @classmethod
     def _to_decimal(cls, v):
         if v is None:
             return Decimal("0")
         return Decimal(str(v))
-
-
-class SportsbookTargetConfig(BaseModel):
-    """A specific sportsbook page to scrape for a specific Kalshi market."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    source: str
-    url: str
-    outcome: str
-    side: str = "yes"
-
-    @field_validator("side", mode="before")
-    @classmethod
-    def _side_to_string(cls, v):
-        if isinstance(v, bool):
-            return "yes" if v else "no"
-        return str(v).lower()
-
-
-class SportsbookScrapeConfig(BaseModel):
-    """Targeted sportsbook scraping, only for already-proposed Kalshi trades."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    enabled: bool = False
-    require_quote_for_agent: bool = False
-    timeout_s: int = 10
-    max_response_bytes: int = 1_000_000
-    min_parse_confidence: float = 0.55
-    max_reference_disagreement: Optional[float] = 0.25
-    blend_weight: float = 0.50
-    user_agent: str = "Mozilla/5.0 (compatible; kalshi-agent-trader/0.1; targeted odds check)"
-    market_urls: Dict[str, List[SportsbookTargetConfig]] = Field(default_factory=dict)
-
-
-class ModelsConfig(BaseModel):
-    """Claude model IDs for the agent tiers.
-
-    The scout does breadth (cheap triage); the analyst does depth (high-stakes pricing).
-    AnalystAgent enforces a Sonnet model; ScoutAgent rejects Sonnet models.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    scout_model: str = "claude-haiku-4-5-20251001"
-    analyst_model: str = "claude-sonnet-4-6"
 
 
 class AppConfig(BaseModel):
@@ -184,9 +147,7 @@ class AppConfig(BaseModel):
     risk: RiskConfig
     runtime: RuntimeConfig
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
-    relative_value: RelativeValueConfig = Field(default_factory=RelativeValueConfig)
-    sportsbook_scrape: SportsbookScrapeConfig = Field(default_factory=SportsbookScrapeConfig)
-    models: ModelsConfig = Field(default_factory=ModelsConfig)
+    three_leg: ThreeLegConfig = Field(default_factory=ThreeLegConfig)
 
 
 def load_config(yaml_path: Optional[str] = None) -> AppConfig:
@@ -204,7 +165,5 @@ def load_config(yaml_path: Optional[str] = None) -> AppConfig:
         risk=RiskConfig(**data.get("risk", {})),
         runtime=RuntimeConfig(**data.get("runtime", {})),
         strategy=StrategyConfig(**data.get("strategy", {})),
-        relative_value=RelativeValueConfig(**data.get("relative_value", {})),
-        sportsbook_scrape=SportsbookScrapeConfig(**data.get("sportsbook_scrape", {})),
-        models=ModelsConfig(**data.get("models", {})),
+        three_leg=ThreeLegConfig(**data.get("three_leg", {})),
     )

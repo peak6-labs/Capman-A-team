@@ -12,28 +12,26 @@ tested with a fake.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Dict, List, Optional, Union
 
 from .breakeven import (
+    DEFAULT_FEE_RATE,
     BreakevenInputs,
     FadeInputs,
     compute_breakeven,
     compute_fade,
+    trading_fee,
 )
 from .market_data import MarketData
 from .models import Market
-from .tennis.fees import DEFAULT_FEE_RATE, trading_fee
-from .tennis.pairing import (  # noqa: F401  (re-exported for two-market consumers/tests)
-    MEN_MATCH,
-    MEN_TOURNEY,
-    WOMEN_MATCH,
-    WOMEN_TOURNEY,
-    Universe,
-    fetch_universe,
-    normalize_name,
-)
+
+MEN_MATCH = "KXATPMATCH"
+WOMEN_MATCH = "KXWTAMATCH"
+MEN_TOURNEY = "KXFOMEN"
+WOMEN_TOURNEY = "KXFOWOMEN"
 
 # Statuses we treat as a live, tradeable match.
 _OPEN_STATUSES = {"open", "active"}
@@ -82,6 +80,50 @@ class PlayerRow:
     note: str = ""
 
 
+def normalize_name(s: str) -> str:
+    """Lowercase, strip accents, and collapse whitespace/punctuation."""
+    if not s:
+        return ""
+    decomposed = unicodedata.normalize("NFKD", s)
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    cleaned = "".join(c if c.isalnum() else " " for c in stripped.lower())
+    return " ".join(cleaned.split())
+
+
+def competitor_id(market: Market) -> Optional[str]:
+    """Stable per-player UUID, or None if the market is not player-structured."""
+    if not market.custom_strike:
+        return None
+    cid = market.custom_strike.get("tennis_competitor")
+    return str(cid) if cid else None
+
+
+def index_by_competitor(markets: List[Market]) -> Dict[str, Market]:
+    """Map competitor UUID -> market, skipping markets without one."""
+    out: Dict[str, Market] = {}
+    for m in markets:
+        cid = competitor_id(m)
+        if cid:
+            out[cid] = m
+    return out
+
+
+def fetch_series_markets(
+    md: MarketData, series_ticker: str, status: str = "open"
+) -> List[Market]:
+    """List all markets in a series, following pagination to exhaustion."""
+    out: List[Market] = []
+    cursor: Optional[str] = None
+    while True:
+        markets, cursor = md.list_markets(
+            status=status, series_ticker=series_ticker, limit=100, cursor=cursor
+        )
+        out.extend(markets)
+        if not cursor:
+            break
+    return out
+
+
 def _side_price(market: Market, side: str, basis: str) -> Optional[Decimal]:
     """Executable ('ask') or informational ('mid') price for a side."""
     if side == "no":
@@ -100,6 +142,24 @@ def _display_name(match: Optional[Market], tourney: Optional[Market]) -> str:
         if m and m.yes_sub_title:
             return m.yes_sub_title
     return "?"
+
+
+# A fetched universe: gender -> (match_index, tourney_index), each keyed by UUID.
+Universe = Dict[str, "tuple[Dict[str, Market], Dict[str, Market]]"]
+
+
+def fetch_universe(md: MarketData, gender: str) -> Universe:
+    """Fetch + index match and tournament markets once for the chosen gender(s)."""
+    genders = ("men", "women") if gender == "both" else (gender,)
+    out: Universe = {}
+    for g in genders:
+        match_series = MEN_MATCH if g == "men" else WOMEN_MATCH
+        tourney_series = MEN_TOURNEY if g == "men" else WOMEN_TOURNEY
+        out[g] = (
+            index_by_competitor(fetch_series_markets(md, match_series)),
+            index_by_competitor(fetch_series_markets(md, tourney_series)),
+        )
+    return out
 
 
 def rows_from_universe(
