@@ -17,7 +17,7 @@ From `~/sandbox/Capman-A-team/kalshi-trader-dashboard/`:
 ```bash
 # Backend — fastapi + uvicorn into the shared sandbox venv
 # (kalshi-agent-trader is already installed there)
-source ~/sandbox/.venv/bin/activate.fish   # fish shell
+source ~/sandbox/.venv/bin/activate  # skip if already active in your shell
 pip install fastapi 'uvicorn[standard]'
 
 # Frontend
@@ -30,7 +30,7 @@ Two terminals, both from `~/sandbox/Capman-A-team/kalshi-trader-dashboard/`:
 
 ```bash
 # Terminal 1 — backend
-source ~/sandbox/.venv/bin/activate.fish   # fish shell
+source ~/sandbox/.venv/bin/activate  # skip if already active in your shell
 cd backend
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
