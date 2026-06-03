@@ -22,12 +22,25 @@ uv run kalshi-trader <command>
 | `order` | Yes | Place one order manually (dry-run by default) |
 | `cancel <ORDER_ID>` | Yes | Cancel a resting order |
 | `kill` / `unkill` | — | Engage/clear the kill switch |
-| `scan` | No | Run scanner, print candidates table |
-| `run [--live]` | Yes | Full scan → brain → execute cycle |
-| `monitor [--once] [--live]` | Yes | Poll open positions and close on exit triggers |
-| `agent-scan` | Yes | Claude finds opportunities (dry mode) |
-| `agent-run [--live]` | Yes | Agent-enhanced scan → evaluate → execute |
-| `breakeven` | No | French Open two-market hedge/fade screener |
+| `three-leg` | No* | Screen QF favourites for the three-leg hedge. `--json` = snapshot for the research agent; `--execute` routes legs through the gates (*auth only when actually executing) |
+| `hedge` | Yes | Post-fill: exit-vs-hedge for an open match position (places nothing) |
+
+> Exploratory commands (`scan`, `run`, `rv-scan`, `rv-run`, `monitor`, `agent-scan`,
+> `agent-run`, `breakeven`, `dip`) were retired with their modules to `attic/`.
+
+## Agents & skills (the prompt layer)
+
+The research/executor split lives in prompts, not Python — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+| File | Role |
+|---|---|
+| `.claude/agents/research-analyst.md` | PROPOSE — screen, re-confirm edge, write a GO/NO-GO trade ticket |
+| `.claude/agents/executor.md` | DISPOSE — validate a ticket, run the gate chain, dry-run first |
+| `.claude/skills/three-leg-research/` | Research playbook + edge checklist + ticket rubric |
+| `.claude/skills/three-leg-execute/` | Execution playbook: drift/staleness check, confirmation gate |
+| `.claude/skills/find-hedge/` | Post-fill de-risk playbook |
+| `research/tickets/TEMPLATE.md` | The trade-ticket contract between the two agents |
 
 ---
 
@@ -103,7 +116,24 @@ Authenticated reads: balance, market positions, resting orders, fills.
 
 ---
 
-### Phase 4 — Systematic Strategy
+### Three-leg fatigue-hedge strategy (the committed strategy)
+
+**`strategies/three_leg/`** — `compute.py` (pure sizing/P&L: de-vig, Kelly, hedge-ratio,
+EV by outcome), `screen.py` (assemble plans from the live book; pair title by competitor
+UUID; turnaround-weighted hedge), `length.py` (discover exact-score / set-winner hedge
+legs), `orders.py` (plan → orders), `render.py` (Rich view + `build_three_leg_json`),
+`runner.py` (fetch → size → render/JSON → optional gated execute). Driven by the
+`three-leg` CLI command and the research/executor agents.
+
+**`tennis_screen.py`** / **`breakeven.py`** — shared tennis infra the three-leg screen
+depends on (series constants, competitor pairing, de-vig + breakeven fee math).
+
+---
+
+> **Archived (Phase 4/5 below).** The systematic longshot core and the generic LLM agent
+> were retired to `attic/` and are no longer wired into the package. Kept for reference.
+
+### Phase 4 — Systematic Strategy *(archived → `attic/`)*
 
 **`scanner.py`**
 Scans open markets for cheap-tail candidates.
@@ -136,7 +166,7 @@ Phase 6 will replace `run_loop` polling with WebSocket events.
 
 ---
 
-### Phase 5 — LLM Agents
+### Phase 5 — LLM Agents *(archived → `attic/agents/`)*
 
 **`agents/base.py`**
 Shared types: `Signal` (ticker, side, fair_prob, confidence, rationale) and `AgentError`.
@@ -158,34 +188,24 @@ Agent-enhanced pipeline:
 
 ---
 
-### Specialty Screens
-
-**`breakeven.py`** / **`tennis_screen.py`**
-French Open two-market hedge/fade screener. Pairs each player's current-match
-market with their tournament-winner market and shows breakeven prices for both strategies.
-
----
-
 ## Tests
 
 ```
 tests/
   test_auth.py          RSA-PSS header format
-  test_breakeven.py     Fee formula + scenario math
-  test_brain.py         Kelly math, probability blend, proposal caps
+  test_breakeven.py     Fee formula + scenario math (shared tennis infra)
   test_compliance.py    Category allowlist, keyword backstop
-  test_config.py        load_config(), Decimal coercion, require_kalshi()
+  test_config.py        load_config(), Decimal coercion, three_leg config
   test_execution.py     Gate ordering, dry-run, V2 body, live path
-  test_monitor.py       All four exit triggers
-  test_polymarket.py    Title matching, threshold, error handling
+  test_hedge.py         Exit-vs-hedge scoring
+  test_portfolio.py     Account-state assembly
   test_risk.py          All cap types, kill switch, size clamping
-  test_scanner.py       Filters, compliance rejection, side selection
   test_tennis_screen.py Player pairing, breakeven scenarios
-  agents/
-    test_market_agent.py  Tool-use parsing, empty signals, AgentError
+  test_three_leg.py     Kelly/hedge-ratio sizing, set-proxy, net P&L, EV
+  attic/                Tests for archived strategies (excluded from collection)
 ```
 
-**101 tests, all pass.**
+**80 tests, all pass.** (`pyproject.toml` excludes `tests/attic`.)
 
 ---
 

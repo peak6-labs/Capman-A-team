@@ -10,10 +10,10 @@ import yaml
 from kalshi_agent_trader.config import (
     AppConfig,
     ComplianceConfig,
-    RelativeValueConfig,
     RiskConfig,
     RuntimeConfig,
     SecretsConfig,
+    ThreeLegConfig,
     load_config,
 )
 
@@ -44,10 +44,10 @@ def test_load_config_compliance(tmp_path):
         runtime:
           request_timeout_s: 10
           max_requests_per_second: 5
-        relative_value:
-          min_edge: 0.03
-          min_match_confidence: 0.8
-          allowed_sources: [polymarket]
+        three_leg:
+          bankroll_usd: 250
+          kelly_fraction: 0.5
+          drift_tolerance_match: 0.03
         """,
     )
     cfg = load_config(str(p))
@@ -57,8 +57,8 @@ def test_load_config_compliance(tmp_path):
     assert cfg.risk.max_total_exposure_usd == Decimal("50.0")
     assert cfg.risk.min_confidence == pytest.approx(0.6)
     assert cfg.runtime.request_timeout_s == 10
-    assert cfg.relative_value.min_edge == Decimal("0.03")
-    assert cfg.relative_value.min_match_confidence == pytest.approx(0.8)
+    assert cfg.three_leg.bankroll_usd == Decimal("250")
+    assert cfg.three_leg.drift_tolerance_match == Decimal("0.03")
 
 
 def test_load_config_defaults_on_empty_sections(tmp_path):
@@ -74,10 +74,11 @@ def test_risk_config_decimal_coercion():
     assert r.max_total_exposure_usd == Decimal("100.5")
 
 
-def test_relative_value_config_decimal_coercion():
-    rv = RelativeValueConfig(min_edge=0.015, max_spread=0.12)
-    assert rv.min_edge == Decimal("0.015")
-    assert rv.max_spread == Decimal("0.12")
+def test_three_leg_config_decimal_coercion():
+    tl = ThreeLegConfig(bankroll_usd=250, fatigue_coef=0.2, drift_tolerance_title=0.04)
+    assert tl.bankroll_usd == Decimal("250")
+    assert tl.fatigue_coef == Decimal("0.2")
+    assert tl.drift_tolerance_title == Decimal("0.04")
 
 
 def test_secrets_require_kalshi_raises_without_key():

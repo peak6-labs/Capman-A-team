@@ -137,6 +137,79 @@ def build_scenario_summary(plans: List[ThreeLegPlan]) -> Panel:
                  title_align="left", border_style="dim")
 
 
+def _leg_json(leg: Leg) -> dict:
+    return {
+        "label": leg.label,
+        "ticker": leg.ticker,
+        "side": "yes",
+        "ask": float(leg.price),
+        "market_fair": float(leg.market_fair),
+        "fair": float(leg.fair),
+        "kelly_or_hedge_ratio": float(leg.kelly_f),
+        "contracts": leg.contracts,
+        "cost_usd": float(leg.cost),
+        "extra_sets": leg.extra_sets,
+        "sized": leg.sized,
+    }
+
+
+def build_three_leg_json(plans: List[ThreeLegPlan], params: ThreeLegParams) -> dict:
+    """Machine-readable snapshot of every screened plan.
+
+    The research agent captures this (`three-leg --json`) instead of scraping the
+    Rich table; the executor agent diffs a trade ticket's prices/sizes against a
+    fresh copy of it. Decimals are emitted as floats for jq-friendliness — the
+    underlying sizing math stays exact in `compute.py`.
+    """
+    out_plans = []
+    for p in plans:
+        all_legs = [p.match_leg] + ([p.title_leg] if p.title_leg else []) + p.long_legs
+        ev = None
+        if p.title_leg and p.match_leg.market_fair > 0:
+            p_cond = min(ONE, p.title_leg.market_fair / p.match_leg.market_fair)
+            ev = float(p.expected_value(p_title_given_advance=p_cond))
+        outcomes = []
+        for o in p.outcomes:
+            lose = p.net_pnl(o, title_win=False)
+            win = p.net_pnl(o, title_win=True) if (o.is_win and p.title_leg) else lose
+            outcomes.append({
+                "label": o.label,
+                "prob": float(o.prob),
+                "is_win": o.is_win,
+                "sets_lost": o.sets_lost,
+                "net_if_no_title_usd": float(lose),
+                "net_if_wins_title_usd": float(win),
+            })
+        out_plans.append({
+            "player": p.name,
+            "gender": p.gender,
+            "rest_days": p.rest_days,
+            "actionable": bool(p.actionable),
+            "hedge_pending": p.hedge_pending,
+            "pending_hedge_event": p.pending_hedge_event,
+            "note": p.note,
+            "legs": [_leg_json(leg) for leg in all_legs],
+            "outcomes": outcomes,
+            "total_cost_usd": float(p.total_cost),
+            "ev_usd": ev,
+        })
+    return {
+        "strategy": "three-leg",
+        "params": {
+            "bankroll_usd": float(params.bankroll),
+            "kelly_fraction": float(params.kelly_fraction),
+            "fatigue_coef": float(params.fatigue_coef),
+            "rest_days": params.rest_days,
+            "match_edge": float(params.match_edge),
+            "title_edge": float(params.title_edge),
+            "fee_rate": float(params.fee_rate),
+        },
+        "actionable_count": sum(1 for p in plans if p.actionable),
+        "screened_count": len(plans),
+        "plans": out_plans,
+    }
+
+
 def build_three_leg_view(
     plans: List[ThreeLegPlan], params: ThreeLegParams, *, status: Optional[str] = None,
 ) -> Group:

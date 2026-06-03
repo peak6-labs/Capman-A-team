@@ -106,22 +106,32 @@ class StrategyConfig(BaseModel):
     stale_move_pct: float = 0.02
 
 
-class RelativeValueConfig(BaseModel):
-    """External-reference signal settings for Kalshi-only relative-value trading."""
+class ThreeLegConfig(BaseModel):
+    """Sizing + execution parameters for the three-leg fatigue-hedge strategy.
+
+    The canonical defaults the research agent screens with (`three-leg --json`)
+    live here, plus the executor's trade-ticket guards: a ticket older than
+    `ticket_max_age_min`, or whose match/title ask has drifted past the matching
+    `drift_tolerance_*`, is refused. These bands are copied into each ticket's
+    frontmatter so the executor's check is self-contained.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
-    enabled: bool = True
-    min_edge: Decimal = Decimal("0.025")
-    min_match_confidence: float = 0.75
-    max_signal_age_s: int = 30
-    max_spread: Decimal = Decimal("0.20")
-    max_markets: int = 200
-    max_signals: int = 10
-    order_count: int = 1
-    allowed_sources: List[str] = Field(default_factory=lambda: ["polymarket"])
+    bankroll_usd: Decimal = Decimal("100")
+    kelly_fraction: Decimal = Decimal("0.5")
+    fatigue_coef: Decimal = Decimal("0.20")
+    fee_rate: Decimal = Decimal("0.07")
+    rest_days: int = 1
+    # Executor staleness / drift guards (the trade-ticket contract).
+    ticket_max_age_min: int = 30
+    drift_tolerance_match: Decimal = Decimal("0.02")
+    drift_tolerance_title: Decimal = Decimal("0.03")
 
-    @field_validator("min_edge", "max_spread", mode="before")
+    @field_validator(
+        "bankroll_usd", "kelly_fraction", "fatigue_coef", "fee_rate",
+        "drift_tolerance_match", "drift_tolerance_title", mode="before",
+    )
     @classmethod
     def _to_decimal(cls, v):
         if v is None:
@@ -137,7 +147,7 @@ class AppConfig(BaseModel):
     risk: RiskConfig
     runtime: RuntimeConfig
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
-    relative_value: RelativeValueConfig = Field(default_factory=RelativeValueConfig)
+    three_leg: ThreeLegConfig = Field(default_factory=ThreeLegConfig)
 
 
 def load_config(yaml_path: Optional[str] = None) -> AppConfig:
@@ -155,5 +165,5 @@ def load_config(yaml_path: Optional[str] = None) -> AppConfig:
         risk=RiskConfig(**data.get("risk", {})),
         runtime=RuntimeConfig(**data.get("runtime", {})),
         strategy=StrategyConfig(**data.get("strategy", {})),
-        relative_value=RelativeValueConfig(**data.get("relative_value", {})),
+        three_leg=ThreeLegConfig(**data.get("three_leg", {})),
     )

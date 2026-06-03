@@ -7,6 +7,7 @@ config's ``dry_run`` (orders are placed only when dry_run is false).
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
@@ -23,7 +24,7 @@ from ...market_data import MarketData
 from ...portfolio import Portfolio
 from ...risk import AccountState, RiskGate
 from .orders import proposed_orders
-from .render import build_three_leg_view
+from .render import build_three_leg_json, build_three_leg_view
 from .screen import ThreeLegParams, build_plans
 
 console = Console()
@@ -31,11 +32,20 @@ console = Console()
 
 def run(
     params: ThreeLegParams, *, gender: str, players: Optional[List[str]], execute: bool,
+    json_out: bool = False,
 ) -> None:
     cfg = load_config()
     with KalshiClient(cfg) as client:
         md = MarketData(client)
         plans = build_plans(md, gender=gender, players=players, params=params)
+
+        # Machine-readable snapshot for the research agent. JSON mode never executes.
+        if json_out:
+            snapshot = build_three_leg_json(plans, params)
+            snapshot["taken_at"] = datetime.now().astimezone().isoformat()
+            print(json.dumps(snapshot, indent=2))
+            return
+
         stamp = datetime.now().strftime("%H:%M:%S")
         view = build_three_leg_view(plans, params, status=f"snapshot {stamp}")
 
