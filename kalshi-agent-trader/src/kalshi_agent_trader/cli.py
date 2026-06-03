@@ -1,23 +1,18 @@
 """Command-line interface for the Kalshi agent-trader.
 
-Phase 1 commands (read-only foundation):
-  auth-check   verify signing + fetch account balance
-  status       exchange status (public)
-  markets      list markets, optionally filtered
-  orderbook    show an orderbook for a ticker
-  events       list events with their categories
+The CLI is the deterministic tool surface the research/executor agents drive.
+Read-only commands (exchange/status/markets/events/orderbook/three-leg snapshot)
+feed the research agent; the write path (order/three-leg --execute/cancel) is
+the executor agent's, gated by compliance -> risk -> execution and honouring
+config `dry_run`. Retired exploratory commands live under `attic/`.
 """
 
 from __future__ import annotations
 
-import time
-from datetime import datetime
 from typing import List, Optional
 
 import typer
-from rich.console import Console, Group
-from rich.live import Live
-from rich.panel import Panel
+from rich.console import Console
 from rich.table import Table
 
 from decimal import Decimal
@@ -29,13 +24,11 @@ from .execution import Executor
 from .journal import Journal
 from .market_data import MarketData
 from .models import Balance
-from .monitor import Monitor
 from .portfolio import Portfolio
-from .render import _build_table, _build_tight_table, _fmt, _fmt_cents
+from .render import _fmt, _fmt_cents
 from .risk import KILL_SWITCH_PATH, ProposedOrder, RiskGate
-from .tennis_screen import fetch_universe, rows_from_universe
-from . import pipeline as _strategy
-from .agents.agent_strategy import run_agent_strategy as _run_agent_strategy
+from .strategies.three_leg import runner as _three_leg_runner
+from .strategies.three_leg.screen import ThreeLegParams
 
 app = typer.Typer(add_completion=False, help="Kalshi agent-trader CLI")
 console = Console()
@@ -242,249 +235,156 @@ def unkill() -> None:
     console.print("[green]Kill switch cleared.[/green]")
 
 
-@app.command(name="scan")
-def scan_cmd(
-    pages: int = typer.Option(20, help="Max pages to paginate (200 markets/page)."),
+@app.command(name="three-leg")
+def three_leg(
+    gender: str = typer.Option("both", help="men | women | both"),
+    player: Optional[List[str]] = typer.Option(
+        None, "--player", "-p", help="Player name substring(s); repeatable."),
+    bankroll: float = typer.Option(100.0, help="Bankroll for Kelly sizing."),
+    kelly: float = typer.Option(0.5, help="Kelly fraction (0.5 = half-Kelly)."),
+    fatigue_coef: float = typer.Option(
+        0.20, help="Pts added to a long-win leg's fair per extra-set, per rest-day."),
+    rest_days: int = typer.Option(
+        1, help="QF→SF turnaround in days; fewer ⇒ bigger length hedge."),
+    match_edge: float = typer.Option(
+        0.0, help="Your edge over the de-vigged match fair (0 ⇒ no match leg)."),
+    title_edge: float = typer.Option(
+        0.0, help="Your edge over the title YES mid (0 ⇒ no title leg)."),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit a structured JSON snapshot (for the research agent)."),
+    execute: bool = typer.Option(
+        False, "--execute",
+        help="Route sized legs through compliance→risk (places orders only when "
+             "config dry_run is false)."),
 ) -> None:
-    """Scan open markets for cheap-tail candidates (public + auth for compliance)."""
-    from .brain import Brain
-    from .compliance import ComplianceGate
-    from .market_data import MarketData
-    from .polymarket import PolymarketClient
-    from .scanner import Scanner
+    """Back each QF favourite (match + title) and hedge their win-LENGTH for SF fatigue.
 
-    cfg = load_config()
-    with KalshiClient(cfg) as client, PolymarketClient(
-        timeout=cfg.runtime.request_timeout_s,
-        verify_ssl=cfg.runtime.verify_ssl,
-    ) as poly:
-        md = MarketData(client)
-        compliance = ComplianceGate(cfg.compliance)
-        scanner = Scanner(md, compliance)
-        brain = Brain(poly)
-        candidates = scanner.scan(max_pages=pages)
-
-        if not candidates:
-            console.print("[yellow]No candidates found.[/yellow]")
-            return
-
-        table = Table(title=f"Scan results ({len(candidates)} candidates)")
-        for col in ("ticker", "side", "price", "spread", "hours", "poly_ref", "score"):
-            table.add_column(col, overflow="fold")
-
-        for c in candidates:
-            ref = poly.fetch_reference(c.title)
-            table.add_row(
-                c.ticker, c.side,
-                _fmt_cents(c.price), _fmt_cents(c.spread),
-                f"{c.hours_to_expiry:.1f}h",
-                f"{float(ref.yes_price):.0%} (sim={ref.similarity:.2f})" if ref else "—",
-                str(c.score),
-            )
-        console.print(table)
-
-
-@app.command(name="run")
-def run_cmd(
-    live: bool = typer.Option(False, "--live", help="Place real orders (overrides dry_run)."),
-) -> None:
-    """Run one full scan → brain → execute cycle."""
-    cfg = load_config()
-    if live:
-        cfg.secrets.require_kalshi()
-    counts = _strategy.run(cfg, live=live)
-    console.print(
-        f"[bold]Cycle complete[/bold] — "
-        f"scanned {counts['scanned']}, "
-        f"proposed {counts['proposed']}, "
-        f"placed {counts['placed']}, "
-        f"dry_run {counts['dry_run']}, "
-        f"rejected {counts['rejected']}"
+    Three Kelly-sized YES legs per favourite: match, title, and 'wins but long'
+    (men 3-1/3-2, women 2-1). The length hedge is upsized as the QF→SF turnaround
+    shrinks — φ = fatigue_coef·extra_sets/rest_days is added to its fair. Legs 1-2
+    size 0 at market unless you supply --match-edge/--title-edge. Screen-only unless
+    --execute (which honors config dry_run). `--json` prints a machine-readable
+    snapshot instead of the table and skips execution.
+    """
+    params = ThreeLegParams(
+        bankroll=Decimal(str(bankroll)), kelly_fraction=Decimal(str(kelly)),
+        fatigue_coef=Decimal(str(fatigue_coef)), rest_days=rest_days,
+        match_edge=Decimal(str(match_edge)), title_edge=Decimal(str(title_edge)),
     )
-
-
-@app.command(name="rv-scan")
-def rv_scan_cmd() -> None:
-    """Find Kalshi relative-value signals from external reference prices; place nothing."""
-    from .relative_value.pipeline import collect_signals
-
-    cfg = load_config()
-    with Journal() as journal:
-        signals = collect_signals(cfg, journal=journal)
-
-    if not signals:
-        console.print("[yellow]No relative-value signals found.[/yellow]")
-        return
-
-    table = Table(title=f"Relative-value signals ({len(signals)})")
-    for col in ("ticker", "side", "action", "kalshi", "ref", "edge", "conf", "source"):
-        table.add_column(col, overflow="fold")
-    for s in signals:
-        table.add_row(
-            s.ticker,
-            s.side,
-            s.action,
-            _fmt_cents(s.kalshi_price),
-            _fmt_cents(s.reference_prob),
-            _fmt_cents(s.edge),
-            f"{s.confidence:.2f}",
-            s.source,
-        )
-    console.print(table)
-
-
-@app.command(name="rv-run")
-def rv_run_cmd(
-    live: bool = typer.Option(False, "--live", help="Place real Kalshi orders (dry-run by default)."),
-) -> None:
-    """Run relative-value scan → Kalshi-only execute cycle."""
-    from .relative_value.pipeline import run as _run_relative_value
-
-    cfg = load_config()
-    cfg.secrets.require_kalshi()
-    counts = _run_relative_value(cfg, live=live)
-    console.print(
-        f"[bold]Relative-value cycle complete[/bold] — "
-        f"signals {counts['signals']}, "
-        f"placed {counts['placed']}, "
-        f"dry_run {counts['dry_run']}, "
-        f"rejected {counts['rejected']}"
-    )
-
-
-@app.command(name="monitor")
-def monitor_cmd(
-    once: bool = typer.Option(False, "--once", help="Check positions once and exit (no loop)."),
-    interval: int = typer.Option(60, "--interval", "-i", help="Seconds between sweeps in loop mode."),
-    live: bool = typer.Option(False, "--live", help="Place real close orders (overrides dry_run)."),
-) -> None:
-    """Poll open positions and close on exit triggers (auth). Dry-run unless --live."""
-    cfg = load_config()
-    if live:
-        cfg.secrets.require_kalshi()
-    with KalshiClient(cfg) as client, Journal() as journal:
-        md = MarketData(client)
-        monitor = Monitor(md, client, journal, live=live, strategy=cfg.strategy)
-        if once:
-            monitor.run_once()
-        else:
-            monitor.run_loop(poll_interval=interval)
-
-
-@app.command(name="agent-scan")
-def agent_scan_cmd(
-    max_events: int = typer.Option(50, help="Max open events to pass to the agent."),
-) -> None:
-    """Agent-only dry scan: Claude identifies and evaluates opportunities (no orders placed)."""
-    cfg = load_config()
-    if not cfg.secrets.anthropic_api_key:
-        console.print("[red]ANTHROPIC_API_KEY not set in .env[/red]")
-        raise typer.Exit(1)
-    counts = _run_agent_strategy(cfg, live=False, max_events=max_events)
-    console.print(
-        f"[bold]Agent scan complete[/bold] — "
-        f"events scanned {counts['events_scanned']}, "
-        f"signals {counts['agent_signals']}, "
-        f"survivors {counts['survivors']}, "
-        f"dry_run {counts['dry_run']}, "
-        f"rejected {counts['rejected']}"
-    )
-
-
-@app.command(name="agent-run")
-def agent_run_cmd(
-    live: bool = typer.Option(False, "--live", help="Place real orders (overrides dry_run)."),
-    max_events: int = typer.Option(50, help="Max open events to pass to the agent."),
-) -> None:
-    """Agent-enhanced scan → evaluate → execute cycle."""
-    cfg = load_config()
-    if not cfg.secrets.anthropic_api_key:
-        console.print("[red]ANTHROPIC_API_KEY not set in .env[/red]")
-        raise typer.Exit(1)
-    if live:
-        cfg.secrets.require_kalshi()
-    counts = _run_agent_strategy(cfg, live=live, max_events=max_events)
-    console.print(
-        f"[bold]Agent run complete[/bold] — "
-        f"events scanned {counts['events_scanned']}, "
-        f"signals {counts['agent_signals']}, "
-        f"survivors {counts['survivors']}, "
-        f"placed {counts['placed']}, "
-        f"dry_run {counts['dry_run']}, "
-        f"rejected {counts['rejected']}"
-    )
+    _three_leg_runner.run(
+        params, gender=gender, players=player or None, execute=execute, json_out=json_out)
 
 
 @app.command()
-def breakeven(
-    player: Optional[List[str]] = typer.Option(
-        None, "--player", "-p",
-        help="Player name substring(s); repeatable. Omit to screen all."),
-    gender: str = typer.Option("both", help="men | women | both"),
-    strategy: str = typer.Option(
-        "both",
-        help="hedge (buy match NO + buy title YES) | fade (buy match YES + sell title) | both"),
-    stake_no: float = typer.Option(100.0, help="Stake on leg 1 (match)."),
-    stake_tourney: float = typer.Option(100.0, help="Stake on leg 2 (title)."),
-    price_basis: str = typer.Option("ask", help="ask | mid"),
-    fee_rate: float = typer.Option(
-        0.07, help="Kalshi fee coefficient (fee = rate*C*p*(1-p), rounded up)."),
-    interval: int = typer.Option(15, "--interval", "-i", help="Poll seconds (loop mode)."),
-    once: bool = typer.Option(False, "--once", help="Single snapshot, no loop."),
-    tight: bool = typer.Option(
-        False, "--tight", "-t",
-        help="Compact 3-column view: player, PnL if loses, breakeven if wins."),
-    feasible_only: bool = typer.Option(
-        False, help="Only show rows whose breakeven is achievable."),
+def hedge(
+    ticker: Optional[str] = typer.Option(
+        None, "--ticker", "-t",
+        help="Position market to hedge. Omit to use your sole open position."),
+    fair: float = typer.Option(
+        0.0, help="Override fair P(position loses); else de-vig the market."),
+    passive: float = typer.Option(
+        0.05, help="Passive offset: suggest a hedge bid this far below the ask."),
 ) -> None:
-    """French Open two-market breakeven screener (public, no auth).
+    """Find the best hedge — or exit — for an open match position. Places nothing.
 
-    Pairs each player's current-match market with their tournament-winner market.
-    `hedge` bets they lose today + win the title (breakeven = title FLOOR the
-    odds must reach after a win). `fade` is the inverse: bets they win today +
-    fades the title (breakeven = title CEILING the odds must stay below).
-    `both` stacks the two grids from a single market snapshot.
+    Enumerates the equivalent 'position loses' instrument (the opponent's market
+    in the same event), prices it against the de-vigged fair, and ALWAYS compares
+    to simply exiting at the bid — flagging a hedge that exiting beats. Suggests a
+    passive limit + a size clamped to your live risk caps.
     """
-    if strategy not in ("hedge", "fade", "both"):
-        raise typer.BadParameter("strategy must be hedge, fade, or both")
-    strategies = ["hedge", "fade"] if strategy == "both" else [strategy]
-    s_no = Decimal(str(stake_no))
-    s_t = Decimal(str(stake_tourney))
-    fee = Decimal(str(fee_rate))
+    from .hedge import HedgeQuote, Position, Rel, evaluate, exit_pnl
 
-    def render(md: MarketData, status: Optional[str] = None):
-        universe = fetch_universe(md, gender)   # fetched once, shared by both grids
-        tables = []
-        for strat in strategies:
-            rows = rows_from_universe(
-                universe, players=player or None,
-                stake_no=s_no, stake_tourney=s_t, price_basis=price_basis,
-                strategy=strat, fee_rate=fee,
-            )
-            builder = _build_tight_table if tight else _build_table
-            tables.append(builder(
-                rows, feasible_only, strategy=strat,
-                stake_no=s_no, stake_tourney=s_t, status=status))
-        return Group(*tables) if len(tables) > 1 else tables[0]
+    def num(x):
+        try:
+            return Decimal(str(x))
+        except Exception:
+            return None
 
-    with _client() as client:
-        md = MarketData(client)
-        if once:
-            console.print(render(md))
+    cfg = load_config()
+    with _client() as c:
+        pf = Portfolio(c)
+        livep = [p for p in pf.market_positions()
+                 if num(p.get("position_fp")) and abs(num(p.get("position_fp"))) > 0]
+        if not livep:
+            console.print("[yellow]No open positions to hedge.[/yellow]")
             return
-        with Live(console=console, refresh_per_second=4, screen=False) as live:
-            try:
-                while True:
-                    stamp = datetime.now().strftime("%H:%M:%S")
-                    try:
-                        live.update(render(
-                            md, status=f"updated {stamp} • poll {interval}s • Ctrl-C to stop"))
-                    except KalshiError as e:
-                        live.update(Panel(f"[red]API error:[/red] {e}\n"
-                                          f"retrying in {interval}s", title="breakeven"))
-                    time.sleep(interval)
-            except KeyboardInterrupt:
-                console.print("[dim]stopped.[/dim]")
+        if ticker:
+            target = next((p for p in livep if p.get("ticker") == ticker), None)
+            if not target:
+                console.print(f"[red]No open position in {ticker}.[/red]")
+                return
+        elif len(livep) == 1:
+            target = livep[0]
+        else:
+            console.print("[yellow]Multiple positions — pass --ticker. Open:[/yellow] "
+                          + ", ".join(p.get("ticker") for p in livep))
+            return
+
+        tk = target["ticker"]
+        signed = num(target.get("position_fp"))
+        cnt = int(abs(signed))
+        cost = abs(num(target.get("total_traded_dollars")
+                       or target.get("market_exposure_dollars")) or Decimal("0"))
+        avg = (cost / abs(signed)) if signed else Decimal("0")
+        if signed < 0:
+            console.print("[yellow]v1 handles long-YES match positions; this is a "
+                          "short/NO position — exit symmetrically.[/yellow]")
+            return
+
+        tm = c.get(f"/markets/{tk}").get("market", {})
+        event = tm.get("event_ticker")
+        t_bid = num(tm.get("yes_bid_dollars"))
+        sibs = [m for m in c.get("/markets", params={"event_ticker": event, "limit": 50})
+                .get("markets", []) if m.get("status") == "active"]
+        others = [m for m in sibs if m.get("ticker") != tk]
+        if len(sibs) != 2 or not others:
+            console.print(f"[yellow]Event has {len(sibs)} active legs — a clean "
+                          "1-for-1 hedge is only defined for 2-outcome markets.[/yellow]")
+            return
+        opp = others[0]
+        t_mid = (t_bid + num(tm.get("yes_ask_dollars"))) / 2
+        o_bid, o_ask = num(opp.get("yes_bid_dollars")), num(opp.get("yes_ask_dollars"))
+        o_mid = (o_bid + o_ask) / 2
+        fair_lose = Decimal(str(fair)) if fair else (o_mid / (t_mid + o_mid))
+
+        pos = Position(ticker=tk, side="yes", count=cnt, avg_cost=avg)
+        q = HedgeQuote(label=f"{opp.get('yes_sub_title')} YES", ticker=opp["ticker"],
+                       buy_side="yes", ask=o_ask, fair=fair_lose, rel=Rel.EQUIVALENT)
+        ev = evaluate(pos, q, exit_bid=t_bid)
+        ex = exit_pnl(pos, t_bid)
+
+        bid = max(Decimal("0.01"), o_ask - Decimal(str(passive)))
+        acct = pf.account_state(opp["ticker"])
+        r = cfg.risk
+        room = min(acct.balance_usd - acct.total_exposure_usd,
+                   r.max_total_exposure_usd - acct.total_exposure_usd,
+                   r.max_per_position_usd - acct.position_exposure_usd)
+        max_ct = max(0, min(int(room / bid) if bid > 0 else 0,
+                            cnt, r.max_contracts_per_order))
+
+        t = Table(title=f"Hedge for {tk}  ({cnt} YES @ {_fmt_cents(avg)})",
+                  header_style="bold")
+        for col in ("option", "cost", "edge", "if position loses", "note"):
+            t.add_column(col)
+        t.add_row("EXIT — sell YES @ bid", _fmt_cents(t_bid), "—",
+                  f"{_fmt_cents(t_bid)} realized", f"P&L {ex:+.2f}")
+        t.add_row(f"HEDGE — buy {q.label}", _fmt_cents(o_ask),
+                  f"{ev.edge_per_contract:+.2f}",
+                  f"locked P&L {ev.locked_pnl:+.2f}",
+                  "[red]exit beats this[/red]" if ev.dominated_by_exit else "clean 1-for-1")
+        console.print(t)
+        rec = ("EXIT — selling realizes a better outcome than locking this hedge"
+               if ev.dominated_by_exit else
+               "HEDGE — the lay is not dominated by exiting")
+        console.print(f"[bold]Recommendation:[/bold] {rec}.")
+        if max_ct > 0:
+            console.print(f"[dim]Passive option: buy {max_ct} {q.label} @ "
+                          f"{_fmt_cents(bid)} (cap-clamped from {cnt}). Fills mainly if "
+                          f"the position recovers — weak vs a fast adverse move. "
+                          f"Places nothing.[/dim]")
+        else:
+            console.print("[dim]Risk caps leave no room for a hedge leg "
+                          "(position already near the exposure cap).[/dim]")
 
 
 if __name__ == "__main__":

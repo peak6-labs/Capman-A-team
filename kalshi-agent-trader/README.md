@@ -1,10 +1,15 @@
 # kalshi-agent-trader
 
-Hybrid Kalshi trading system: a deterministic systematic core for execution/risk, with LLM agents
-generating signals. Agents **propose**; deterministic gates (**compliance → risk**) **dispose**.
-Runs as an on-demand CLI. Built with Python + `uv`.
+Kalshi trading system committed to one strategy — the **three-leg fatigue hedge** — wrapped in a
+**research-agent / executor-agent** architecture. A research agent **proposes** a trade ticket;
+an executor agent **disposes** by routing it through deterministic **compliance → risk → execution**
+gates. The judgment lives in prompts (Claude Code subagents + skills); the gates and sizing math
+live in tested Python. Runs as an on-demand CLI. Built with Python + `uv`.
 
+> **Architecture:** see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+> research → ticket → executor flow and the prompt/code boundary.
 > **PEAK6 Project — compliance is enforced in code.** See [Compliance](#compliance).
+> Retired exploratory strategies live in [`src/kalshi_agent_trader/attic/`](src/kalshi_agent_trader/attic/).
 
 ## Setup
 
@@ -73,8 +78,12 @@ These correct several stale facts in public docs:
 
 ### CLI today
 
+Core + the committed strategy (exploratory commands retired to `attic/`):
+
 `exchange` · `status` · `auth-check` · `markets` · `events` · `orderbook` · `positions` ·
-`order` (dry-run unless `--live`) · `cancel` · `kill` · `unkill`
+`order` (dry-run unless `--live`) · `cancel` · `kill` · `unkill` ·
+`three-leg` (screen; `--json` snapshot for the research agent; `--execute` gated by `dry_run`) ·
+`hedge` (post-fill exit-vs-hedge, places nothing)
 
 ### Before live trading
 

@@ -42,8 +42,10 @@ compliance:
 # bounded by actual account balance regardless of these values (no leverage).
 # ---------------------------------------------------------------------------
 risk:
-  dry_run: false
-  max_total_exposure_usd: 20.0
+  # KEEP TRUE until the research agent re-confirms a live edge. The three-leg
+  # structure backtested ~flat-EV (June 2026); nothing trades live until you flip this.
+  dry_run: true
+  max_total_exposure_usd: 100.0
   max_per_position_usd: 5.0
   max_contracts_per_order: 10
   daily_loss_cap_usd: 10.0
@@ -69,20 +71,22 @@ strategy:
   stale_move_pct: 0.02           # ...if price moved < 2%
 
 # ---------------------------------------------------------------------------
-# RELATIVE VALUE — external reference prices trigger Kalshi-only proposals.
-# External venues are signal inputs only; all orders still route through Kalshi.
+# THREE-LEG — sizing defaults the research agent screens with, plus the
+# executor's trade-ticket guards. The drift/staleness bands are copied into each
+# ticket's frontmatter so the executor's validity check is self-contained.
+# (Exploratory strategies — relative-value, longshot scanner/brain, dip-reversion,
+#  the generic LLM agent — were retired to src/kalshi_agent_trader/attic/.)
 # ---------------------------------------------------------------------------
-relative_value:
-  enabled: true
-  min_edge: 0.025
-  min_match_confidence: 0.75
-  max_signal_age_s: 30
-  max_spread: 0.20
-  max_markets: 200
-  max_signals: 10
-  order_count: 1
-  allowed_sources:
-    - polymarket
+three_leg:
+  bankroll_usd: 100
+  kelly_fraction: 0.5       # half-Kelly
+  fatigue_coef: 0.20        # pts of conditional title prob lost per extra-set per rest-day
+  fee_rate: 0.07            # Kalshi fee coefficient
+  rest_days: 1              # QF→SF turnaround; fewer ⇒ bigger length hedge
+  # Executor guards:
+  ticket_max_age_min: 30    # refuse a trade ticket older than this
+  drift_tolerance_match: 0.02   # abort if the live match ask drifts past this vs the ticket
+  drift_tolerance_title: 0.03   # ...and likewise for the title ask
 
 # ---------------------------------------------------------------------------
 # RUNTIME
