@@ -1,11 +1,12 @@
-"""Agent-enhanced pipeline: Claude scans events, then evaluates survivors.
+"""Agent-enhanced pipeline: Claude triages market snapshots, then evaluates survivors.
 
 Pipeline:
   1. List open events filtered to compliance-allowed categories (reduces Claude input size).
-  2. Agent finds opportunities in the event list (find_opportunities).
-  3. For each signal: fetch the Kalshi market and run compliance + scanner filters.
-  4. Agent evaluates each survivor with Polymarket reference (evaluate).
-  5. Build ProposedOrder from the refined Signal and submit through the gate chain.
+  2. Build a compact quote-aware market context for those events.
+  3. Agent triages the market snapshots.
+  4. For each signal: fetch the Kalshi market and run compliance + scanner filters.
+  5. Agent evaluates each survivor with Polymarket reference (evaluate).
+  6. Build ProposedOrder from the refined Signal and submit through the gate chain.
 
 Agents PROPOSE. Compliance → risk → execution DISPOSE.
 """
@@ -25,26 +26,123 @@ from ..market_data import MarketData
 from ..polymarket import PolymarketClient
 from ..portfolio import Portfolio
 from ..risk import ProposedOrder, RiskGate
-from ..scanner import MAX_HOURS, MAX_SPREAD, MIN_HOURS, MIN_PRICE, MIN_VOLUME_FP, ScanCandidate
+from ..scanner import MAX_HOURS, MAX_SPREAD, MIN_HOURS, MIN_VOLUME_FP, ScanCandidate
 from ..sportsbook_scrape import (
     TargetedSportsbookScraper,
     blended_signal_from_quotes,
     reference_prob_for_signal,
 )
 from ..util import hours_until, volume_fp
-from .base import Signal
-from .market_agent import MarketAgent
+from .analyst_agent import AnalystAgent
+from .base import MarketContext, Signal
+from .scout_agent import ScoutAgent
+
+AGENT_MARKET_CONTEXT_LIMIT = 120
+AGENT_LONG_HORIZON_MIN_VOLUME_FP = 1_000.0
+AGENT_LONG_HORIZON_MAX_SPREAD = Decimal("0.20")
 
 
 def _signal_to_proposed(signal: Signal, market_price: Decimal) -> ProposedOrder:
     return ProposedOrder(
         ticker=signal.ticker,
         side=signal.side,
-        action="sell",
+        action=signal.recommended_action,
         price=market_price,
         count=1,            # risk gate will clamp to fit caps
         fair_prob=signal.fair_prob,
         confidence=signal.confidence,
+        rationale=signal.audit_rationale(),
+        main_risk=signal.main_risk,
+        resolution_risk=signal.resolution_risk,
+        liquidity_risk=signal.liquidity_risk,
+        news_dependency=signal.news_dependency,
+    )
+
+
+def _float_decimal(value: Optional[Decimal]) -> Optional[float]:
+    return None if value is None else float(value)
+
+
+def _spread(bid: Optional[Decimal], ask: Optional[Decimal]) -> Optional[Decimal]:
+    if bid is None or ask is None:
+        return None
+    return ask - bid
+
+
+def _market_context_score(ctx: MarketContext) -> float:
+    """Prioritize fast, useful Claude context over exhaustive market coverage."""
+    score = min(ctx.volume_fp, 100_000.0) / 100_000.0
+    if ctx.best_spread is not None:
+        score += max(0.0, 0.25 - ctx.best_spread)
+    prices = [p for p in (ctx.yes_bid, ctx.no_bid) if p is not None]
+    if any(0.01 <= p <= 0.15 for p in prices):
+        score += 0.25
+    if ctx.hours_to_expiry is not None and 4.0 <= ctx.hours_to_expiry <= 72.0:
+        score += 0.15
+    return score
+
+
+def _is_trade_action(action: str) -> bool:
+    return action in {"buy", "sell"}
+
+
+def _entry_quote(market, side: str, action: str) -> tuple[Optional[Decimal], Optional[Decimal], Decimal]:
+    """Return entry price, opposite quote, and spread for a proposed action."""
+    bid = market.yes_bid if side == "yes" else market.no_bid
+    ask = market.yes_ask if side == "yes" else market.no_ask
+    spread = (ask - bid) if ask is not None and bid is not None else Decimal("0")
+    price = ask if action == "buy" else bid
+    opposite = bid if action == "buy" else ask
+    return price, opposite, spread
+
+
+def _agent_entry_allowed(
+    *,
+    price: Optional[Decimal],
+    spread: Decimal,
+    hours: Optional[float],
+    volume: float,
+) -> bool:
+    """Agent-specific market quality gate.
+
+    The systematic scanner is short-dated by design. Agent trades may be long-dated
+    when the book is tight and historically active, which is common in politics.
+    """
+    if price is None or price <= 0 or price >= 1:
+        return False
+    if spread >= MAX_SPREAD:
+        return False
+    if volume < MIN_VOLUME_FP:
+        return False
+    if hours is None:
+        return False
+    if MIN_HOURS <= hours <= MAX_HOURS:
+        return True
+    return volume >= AGENT_LONG_HORIZON_MIN_VOLUME_FP and spread <= AGENT_LONG_HORIZON_MAX_SPREAD
+
+
+def _build_market_context(market, category: Optional[str], series: str = "") -> MarketContext:
+    yes_spread = _spread(market.yes_bid, market.yes_ask)
+    no_spread = _spread(market.no_bid, market.no_ask)
+    spreads = [s for s in (yes_spread, no_spread) if s is not None]
+    expiry = market.expected_expiration_time or market.expiration_time
+    hours = hours_until(expiry)
+    return MarketContext(
+        ticker=market.ticker,
+        event_ticker=market.event_ticker,
+        title=market.title or market.ticker,
+        category=category,
+        series=series,
+        yes_bid=_float_decimal(market.yes_bid),
+        yes_ask=_float_decimal(market.yes_ask),
+        no_bid=_float_decimal(market.no_bid),
+        no_ask=_float_decimal(market.no_ask),
+        yes_spread=_float_decimal(yes_spread),
+        no_spread=_float_decimal(no_spread),
+        best_spread=_float_decimal(min(spreads)) if spreads else None,
+        volume_fp=float(volume_fp(market)),
+        liquidity=float(market.liquidity or 0),
+        hours_to_expiry=None if hours is None else round(hours, 1),
     )
 
 
@@ -71,7 +169,9 @@ def run_agent_strategy(
         risk = RiskGate(config.risk)
         portfolio = Portfolio(client)
         executor = Executor(client, compliance, risk, journal, dry_run=dry_run)
-        agent = MarketAgent(api_key=config.secrets.anthropic_api_key or "")
+        api_key = config.secrets.anthropic_api_key or ""
+        scout = ScoutAgent(api_key=api_key, model=config.models.scout_model)
+        analyst = AnalystAgent(api_key=api_key, model=config.models.analyst_model)
         sportsbook = TargetedSportsbookScraper(config.sportsbook_scrape)
 
         # Step 1: fetch open events, pre-filter to allowed categories.
@@ -90,6 +190,7 @@ def run_agent_strategy(
 
         counts: Dict[str, int] = {
             "events_scanned": len(allowed_events),
+            "markets_scanned": 0,
             "agent_signals": 0,
             "survivors": 0,
             "placed": 0,
@@ -100,8 +201,35 @@ def run_agent_strategy(
         if not allowed_events:
             return counts
 
-        # Step 2: agent scanner pass.
-        raw_signals: List[Signal] = agent.find_opportunities(allowed_events)
+        # Step 2: build a fast, quote-aware market context for the Sonnet triage pass.
+        market_contexts: List[MarketContext] = []
+        for ev in allowed_events:
+            try:
+                markets, _ = md.list_markets(
+                    status="open", event_ticker=ev.event_ticker, limit=100
+                )
+            except Exception:
+                counts["rejected"] += 1
+                continue
+            for market in markets:
+                ctx = _build_market_context(
+                    market, category=ev.category, series=ev.series_ticker or ""
+                )
+                # Keep dead/stale-looking markets out of the prompt unless they
+                # have enough traded volume to be worth an explicit agent read.
+                if (
+                    ctx.volume_fp <= 0
+                    and (ctx.best_spread is None or ctx.best_spread > 0.25)
+                ):
+                    continue
+                market_contexts.append(ctx)
+
+        market_contexts.sort(key=_market_context_score, reverse=True)
+        market_contexts = market_contexts[:AGENT_MARKET_CONTEXT_LIMIT]
+        counts["markets_scanned"] = len(market_contexts)
+
+        # Step 3: scout pass over live market snapshots (cheap triage tier).
+        raw_signals: List[Signal] = scout.find_market_opportunities(market_contexts)
         counts["agent_signals"] = len(raw_signals)
 
         processed = 0
@@ -109,7 +237,22 @@ def run_agent_strategy(
             if processed >= MAX_THESES:
                 break
 
-            # Step 3: compliance + scanner filter on each agent candidate.
+            if not _is_trade_action(signal.recommended_action):
+                counts["rejected"] += 1
+                journal.record_decision(
+                    outcome="rejected",
+                    source="agent:triage",
+                    market_ticker=signal.ticker,
+                    side=signal.side,
+                    fair_prob=signal.fair_prob,
+                    confidence=signal.confidence,
+                    rationale=signal.audit_rationale(),
+                    gate="agent",
+                    reason=f"agent recommended {signal.recommended_action}",
+                )
+                continue
+
+            # Step 4: compliance + scanner filter on each agent candidate.
             try:
                 market = md.get_market(signal.ticker)
                 category = md.category_for_market(market)
@@ -123,44 +266,54 @@ def run_agent_strategy(
                 continue
 
             side = signal.side
-            bid = market.yes_bid if side == "yes" else market.no_bid
-            ask = market.yes_ask if side == "yes" else market.no_ask
-            if bid is None or not (MIN_PRICE <= bid):
-                counts["rejected"] += 1
-                continue
-
             expiry = market.expected_expiration_time or market.expiration_time
             hours = hours_until(expiry)
-            if hours is None or not (MIN_HOURS <= hours <= MAX_HOURS):
-                counts["rejected"] += 1
-                continue
-
-            if ask is not None and (ask - bid) >= MAX_SPREAD:
-                counts["rejected"] += 1
-                continue
-
             vol = volume_fp(market)
-            if vol < MIN_VOLUME_FP:
+            entry_price, _, spread = _entry_quote(market, side, signal.recommended_action)
+            if not _agent_entry_allowed(
+                price=entry_price,
+                spread=spread,
+                hours=hours,
+                volume=vol,
+            ):
                 counts["rejected"] += 1
                 continue
 
             counts["survivors"] += 1
             processed += 1
 
-            # Step 4: agent analyst pass with Polymarket reference.
+            # Step 5: agent analyst pass with Polymarket reference.
             candidate = ScanCandidate(
                 ticker=market.ticker,
                 title=market.title or market.ticker,
                 category=category,
                 side=side,
-                price=bid,
-                spread=(ask - bid) if ask else Decimal("0"),
+                price=entry_price,
+                spread=spread,
                 hours_to_expiry=round(hours, 1),
                 volume_fp=vol,
-                score=float(bid) * hours,
+                score=float(entry_price) * hours,
             )
             poly_ref = poly.fetch_reference(candidate.title)
-            refined = agent.evaluate(candidate, poly_ref)
+            refined = analyst.evaluate(candidate, poly_ref, action=signal.recommended_action)
+            if refined.recommended_action != signal.recommended_action:
+                counts["rejected"] += 1
+                journal.record_decision(
+                    outcome="rejected",
+                    source="agent:analyst",
+                    market_ticker=market.ticker,
+                    side=refined.side,
+                    target_price=entry_price,
+                    fair_prob=refined.fair_prob,
+                    confidence=refined.confidence,
+                    rationale=refined.audit_rationale(),
+                    gate="agent",
+                    reason=(
+                        f"agent changed action from {signal.recommended_action} "
+                        f"to {refined.recommended_action}"
+                    ),
+                )
+                continue
 
             # Optional targeted scrape: only after the agent has produced a
             # prospective Kalshi trade, and only for URLs configured for this ticker.
@@ -234,24 +387,24 @@ def run_agent_strategy(
                         blend_weight=config.sportsbook_scrape.blend_weight,
                     )
 
-            # Step 5: submit through the gate chain.
-            order = _signal_to_proposed(refined, bid)
+            # Step 6: submit through the gate chain.
+            order = _signal_to_proposed(refined, entry_price)
             try:
                 account = portfolio.account_state(order.ticker)
             except Exception:
                 counts["rejected"] += 1
                 continue
 
-            result = executor.submit(
+            result_ex = executor.submit(
                 order,
                 category=category,
                 title=market.title or "",
                 account=account,
                 source="agent:sportsbook_scrape" if sportsbook_quotes else "agent",
             )
-            counts[result.status] += 1
+            counts[result_ex.status] += 1
 
-            if result.status == "placed" and result.order_status in ("executed", "filled"):
+            if result_ex.status == "placed" and result_ex.order_status in ("executed", "filled"):
                 journal.record_position(
                     {
                         "ticker": order.ticker,
@@ -259,8 +412,8 @@ def run_agent_strategy(
                         "action": order.action,
                         "entry_price": order.price,
                         "target_price": order.price * Decimal(str(config.strategy.target_fraction)),
-                        "count": result.approved_count or order.count,
-                        "order_id": result.client_order_id,
+                        "count": result_ex.approved_count or order.count,
+                        "order_id": result_ex.client_order_id,
                         "confidence": order.confidence,
                         "expiry": expiry,
                     }

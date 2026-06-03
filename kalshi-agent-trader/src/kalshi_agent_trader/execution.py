@@ -166,6 +166,7 @@ class Executor:
             fair_prob=order.fair_prob,
             confidence=order.confidence,
             max_contracts=order.count,
+            rationale=order.rationale,
             gate=gate,
             reason=reason,
         )

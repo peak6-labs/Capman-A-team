@@ -1,19 +1,19 @@
-"""Tests for MarketAgent: tool-use parsing, empty signals, and error handling."""
+"""Tests for AnalystAgent (evaluate, Sonnet guard, fail-closed fallback) and the
+shared signal parser in agents/_signals.py."""
 
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from kalshi_agent_trader.agents.base import AgentError, Signal
-from kalshi_agent_trader.agents.market_agent import MarketAgent
-from kalshi_agent_trader.models import Event
+from kalshi_agent_trader.agents._signals import parse_signal
+from kalshi_agent_trader.agents.analyst_agent import AnalystAgent
+from kalshi_agent_trader.agents.base import AgentError
 from kalshi_agent_trader.polymarket import ReferencePrice
 from kalshi_agent_trader.scanner import ScanCandidate
 
 
 def _tool_use_response(signals):
-    """Build a fake anthropic response with a submit_signals tool_use block."""
     block = MagicMock()
     block.type = "tool_use"
     block.name = "submit_signals"
@@ -24,8 +24,8 @@ def _tool_use_response(signals):
     return response
 
 
-def _agent() -> MarketAgent:
-    return MarketAgent(api_key="test-key")
+def _agent() -> AnalystAgent:
+    return AnalystAgent(api_key="test-key")
 
 
 def _candidate() -> ScanCandidate:
@@ -42,37 +42,9 @@ def _candidate() -> ScanCandidate:
     )
 
 
-def test_find_opportunities_parses_signals():
-    agent = _agent()
-    raw = [
-        {"ticker": "T-1", "side": "yes", "fair_prob": 0.03, "confidence": 0.75,
-         "rationale": "Longshot bias evident"}
-    ]
-    with patch.object(agent._client.messages, "create", return_value=_tool_use_response(raw)):
-        events = [MagicMock(spec=Event, event_ticker="E-1", title="Test", category="Sports",
-                            series_ticker="S-1")]
-        signals = agent.find_opportunities(events)
-
-    assert len(signals) == 1
-    assert signals[0].ticker == "T-1"
-    assert signals[0].fair_prob == pytest.approx(0.03)
-    assert signals[0].confidence == pytest.approx(0.75)
-
-
-def test_find_opportunities_empty_list_returns_empty():
-    agent = _agent()
-    # Should short-circuit without calling the API.
-    signals = agent.find_opportunities([])
-    assert signals == []
-
-
-def test_find_opportunities_empty_signals_in_response():
-    agent = _agent()
-    with patch.object(agent._client.messages, "create", return_value=_tool_use_response([])):
-        events = [MagicMock(spec=Event, event_ticker="E-1", title="T", category="Sports",
-                            series_ticker=None)]
-        signals = agent.find_opportunities(events)
-    assert signals == []
+def test_analyst_is_sonnet_only():
+    with pytest.raises(ValueError, match="Sonnet-only"):
+        AnalystAgent(api_key="test-key", model="claude-haiku-4-5-20251001")
 
 
 def test_evaluate_returns_signal():
@@ -93,24 +65,28 @@ def test_evaluate_with_polymarket_ref():
     poly_ref = ReferencePrice(
         question="Will it snow in Denver?", yes_price=Decimal("0.04"), similarity=0.82
     )
-    with patch.object(agent._client.messages, "create", return_value=_tool_use_response(raw)):
+    with patch.object(agent._client.messages, "create", return_value=_tool_use_response(raw)) as create:
         signal = agent.evaluate(_candidate(), poly_ref=poly_ref)
 
+    user_content = create.call_args.kwargs["messages"][0]["content"]
+    assert "Polymarket reference" in user_content
     assert signal.confidence == pytest.approx(0.85)
 
 
-def test_evaluate_fallback_on_empty_signal():
+def test_evaluate_fails_closed_on_empty_signal():
+    """Empty model response must yield a non-trade `watch` action, not a synthetic sell."""
     agent = _agent()
     with patch.object(agent._client.messages, "create", return_value=_tool_use_response([])):
         signal = agent.evaluate(_candidate())
 
     assert signal.ticker == "WEATHER-DENVER-24"
-    assert signal.confidence == 0.0  # fallback sentinel
+    assert signal.confidence == 0.0
+    assert signal.recommended_action == "watch"
 
 
 def test_raises_agent_error_when_tool_not_called():
     block = MagicMock()
-    block.type = "text"  # not tool_use
+    block.type = "text"
     response = MagicMock()
     response.content = [block]
     response.stop_reason = "end_turn"
@@ -118,14 +94,24 @@ def test_raises_agent_error_when_tool_not_called():
     agent = _agent()
     with patch.object(agent._client.messages, "create", return_value=response):
         with pytest.raises(AgentError, match="submit_signals"):
-            agent.find_opportunities(
-                [MagicMock(spec=Event, event_ticker="E", title="T",
-                           category="Sports", series_ticker=None)]
-            )
+            agent.evaluate(_candidate())
 
+
+# --- shared parser (agents/_signals.py) -------------------------------------- #
 
 def test_parse_signal_raises_on_missing_field():
-    from kalshi_agent_trader.agents.market_agent import MarketAgent
     raw = {"ticker": "T-1", "side": "yes"}  # missing fair_prob, confidence, rationale
     with pytest.raises(AgentError):
-        MarketAgent._parse_signal(raw)
+        parse_signal(raw)
+
+
+def test_parse_signal_invalid_action_becomes_avoid():
+    raw = {
+        "ticker": "T-1",
+        "side": "yes",
+        "fair_prob": 0.03,
+        "confidence": 0.8,
+        "rationale": "bad action",
+        "recommended_action": "hold",
+    }
+    assert parse_signal(raw).recommended_action == "avoid"

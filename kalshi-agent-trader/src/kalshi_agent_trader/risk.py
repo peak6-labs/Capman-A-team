@@ -32,6 +32,11 @@ class ProposedOrder:
     confidence: float       # 0..1
     action: str = "buy"     # "buy" | "sell"
     post_only: bool = False  # True = maker-only: rest, never cross (Kalshi cancels if it would take)
+    rationale: str = ""
+    main_risk: str = ""
+    resolution_risk: str = ""
+    liquidity_risk: str = ""
+    news_dependency: str = ""
 
 
 @dataclass(frozen=True)

@@ -162,20 +162,33 @@ Phase 6 will replace `run_loop` polling with WebSocket events.
 **`agents/base.py`**
 Shared types: `Signal` (ticker, side, fair_prob, confidence, rationale) and `AgentError`.
 
-**`agents/market_agent.py`**
-Claude-powered scanner + analyst using `claude-sonnet-4-6`.
-- `find_opportunities(events)` — batches up to 50 events; Claude identifies mispriced tails
+**`agents/scout_agent.py`**
+Cheap, high-volume triage tier (Haiku by default; rejects Sonnet models). Its misses are
+recoverable downstream, so a cheaper model is the right trade-off.
+- `find_opportunities(events)` — batches events; identifies mispriced tails
+- `find_market_opportunities(markets)` — triages live market snapshots, returns ≤12 signals
+
+**`agents/analyst_agent.py`**
+High-stakes per-candidate pricing tier (Sonnet-only guard).
 - `evaluate(candidate, poly_ref)` — refines fair_prob for a single market
-- System prompt cached with `ephemeral` cache_control (shared across both methods)
-- Structured output via tool use — no free-text parsing
+- Fails closed: an empty model response returns a `watch` action (not a synthetic trade)
+
+**`agents/_signals.py`**
+Shared `submit_signals` tool schema, `parse_signal`, and the cached-system-prompt
+`call_agent` helper used by both agents. Structured output via tool use — no free-text parsing.
 
 **`agents/agent_strategy.py`**
-Agent-enhanced pipeline:
+Agent-enhanced pipeline (model IDs from `config.models`):
 1. Fetch open events (pre-filtered to allowed categories)
-2. Claude scans for opportunities (`find_opportunities`)
+2. Scout triages live market snapshots (`find_market_opportunities`)
 3. Each signal runs through compliance + scanner filters
-4. Claude evaluates survivors with Polymarket reference (`evaluate`)
+4. Analyst evaluates survivors with Polymarket reference (`evaluate`)
 5. Submit through compliance → risk → execution gate chain
+
+**`analysis/calibration.py`**
+Brier scoring of closed positions against Kalshi settlement (`Market.result`), bucketed by
+source and category. Recovers predicted `fair_prob` from the `decisions` journal. Read-only;
+surfaced via the `calibrate` CLI command.
 
 ---
 
@@ -195,7 +208,8 @@ tests/
   test_breakeven.py     Fee formula + scenario math
   test_brain.py         Kelly math, probability blend, proposal caps
   test_compliance.py    Category allowlist, keyword backstop
-  test_config.py        load_config(), Decimal coercion, require_kalshi()
+  test_config.py        load_config(), Decimal coercion, require_kalshi(), models tier
+  test_agent_calibration.py  Brier scoring, settlement join, unsettled skip
   test_execution.py     Gate ordering, dry-run, V2 body, live path
   test_monitor.py       All four exit triggers
   test_polymarket.py    Title matching, threshold, error handling
@@ -204,10 +218,12 @@ tests/
   test_sportsbook_scrape.py Targeted odds parsing + signal blending
   test_tennis_screen.py Player pairing, breakeven scenarios
   agents/
-    test_market_agent.py  Tool-use parsing, empty signals, AgentError
+    test_scout_agent.py    Triage parsing, empty inputs, model guard, AgentError
+    test_analyst_agent.py  evaluate, Sonnet guard, fail-closed fallback, parse_signal
+    test_agent_strategy.py Quote/action helper math
 ```
 
-**171 tests, all pass.**
+**189 tests, all pass.**
 
 ---
 

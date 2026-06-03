@@ -1,4 +1,5 @@
+from .analyst_agent import AnalystAgent
 from .base import AgentError, Signal
-from .market_agent import MarketAgent
+from .scout_agent import ScoutAgent
 
-__all__ = ["Signal", "AgentError", "MarketAgent"]
+__all__ = ["Signal", "AgentError", "ScoutAgent", "AnalystAgent"]

@@ -163,6 +163,19 @@ class SportsbookScrapeConfig(BaseModel):
     market_urls: Dict[str, List[SportsbookTargetConfig]] = Field(default_factory=dict)
 
 
+class ModelsConfig(BaseModel):
+    """Claude model IDs for the agent tiers.
+
+    The scout does breadth (cheap triage); the analyst does depth (high-stakes pricing).
+    AnalystAgent enforces a Sonnet model; ScoutAgent rejects Sonnet models.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    scout_model: str = "claude-haiku-4-5-20251001"
+    analyst_model: str = "claude-sonnet-4-6"
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -173,6 +186,7 @@ class AppConfig(BaseModel):
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     relative_value: RelativeValueConfig = Field(default_factory=RelativeValueConfig)
     sportsbook_scrape: SportsbookScrapeConfig = Field(default_factory=SportsbookScrapeConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
 
 
 def load_config(yaml_path: Optional[str] = None) -> AppConfig:
@@ -192,4 +206,5 @@ def load_config(yaml_path: Optional[str] = None) -> AppConfig:
         strategy=StrategyConfig(**data.get("strategy", {})),
         relative_value=RelativeValueConfig(**data.get("relative_value", {})),
         sportsbook_scrape=SportsbookScrapeConfig(**data.get("sportsbook_scrape", {})),
+        models=ModelsConfig(**data.get("models", {})),
     )

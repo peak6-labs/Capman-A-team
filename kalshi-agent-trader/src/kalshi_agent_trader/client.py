@@ -11,6 +11,7 @@ Read endpoints (markets/events/series/orderbook) are public and need no signing.
 
 from __future__ import annotations
 
+import random
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -131,7 +132,8 @@ class KalshiClient:
                     raise KalshiError(resp.status_code, resp.text)
 
             if attempt < self._max_retries:
-                time.sleep(min(2 ** attempt * 0.5, 8.0))
+                base = min(2 ** attempt * 0.5, 8.0)
+                time.sleep(base + random.uniform(0, base * 0.1))
 
         assert last_exc is not None
         raise last_exc

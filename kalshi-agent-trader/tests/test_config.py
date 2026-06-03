@@ -83,6 +83,26 @@ def test_load_config_defaults_on_empty_sections(tmp_path):
     assert cfg.runtime.max_requests_per_second == pytest.approx(8.0)
 
 
+def test_models_config_defaults(tmp_path):
+    cfg = load_config(str(_write_yaml(tmp_path, "{}")))
+    assert "haiku" in cfg.models.scout_model
+    assert "sonnet" in cfg.models.analyst_model
+
+
+def test_models_config_override(tmp_path):
+    p = _write_yaml(
+        tmp_path,
+        """
+        models:
+          scout_model: claude-haiku-4-5-20251001
+          analyst_model: claude-sonnet-4-6
+        """,
+    )
+    cfg = load_config(str(p))
+    assert cfg.models.scout_model == "claude-haiku-4-5-20251001"
+    assert cfg.models.analyst_model == "claude-sonnet-4-6"
+
+
 def test_risk_config_decimal_coercion():
     r = RiskConfig(max_total_exposure_usd=100.5)
     assert r.max_total_exposure_usd == Decimal("100.5")

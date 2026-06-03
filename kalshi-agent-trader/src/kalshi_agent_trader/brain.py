@@ -124,6 +124,9 @@ class Brain:
         """
         proposals = []
         for c in candidates:
+            p_heuristic = _heuristic_discount(float(c.price), c.volume_fp)
+            if self.kelly_fraction(p_heuristic, float(c.price)) <= 0:
+                continue
             p_yes, confidence = self.estimate_probability(c)
             kf = self.kelly_fraction(p_yes, float(c.price))
             if kf <= 0 or confidence < self._s.min_confidence:

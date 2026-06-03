@@ -31,6 +31,8 @@ class Market(BaseModel):
     event_ticker: str
     market_type: Optional[str] = None
     status: Optional[str] = None
+    # Settlement outcome once resolved: "yes" / "no" (empty/None while unsettled).
+    result: Optional[str] = None
     title: Optional[str] = None
     expiration_time: Optional[str] = None
     expected_expiration_time: Optional[str] = None

@@ -112,6 +112,16 @@ sportsbook_scrape:
   #       side: yes
 
 # ---------------------------------------------------------------------------
+# MODELS — Claude model IDs per agent tier. The scout does cheap, high-volume
+# triage (its misses are caught by the systematic filters + analyst pass), so it
+# runs on Haiku. The analyst does the high-stakes per-candidate pricing on Sonnet.
+# The analyst tier requires a Sonnet model; the scout tier rejects Sonnet models.
+# ---------------------------------------------------------------------------
+models:
+  scout_model: claude-haiku-4-5-20251001
+  analyst_model: claude-sonnet-4-6
+
+# ---------------------------------------------------------------------------
 # RUNTIME
 # ---------------------------------------------------------------------------
 runtime:
