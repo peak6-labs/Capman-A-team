@@ -114,21 +114,26 @@ export default function PnL() {
                   : (
                     <ResponsiveContainer width="100%" height={280}>
                       <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
-                        <XAxis dataKey="time" tick={{ fontSize: 11, fill: '#6b7280' }} />
-                        <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} tickFormatter={v => `$${v.toFixed(2)}`} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                        <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--chart-tick)' }} />
+                        <YAxis tick={{ fontSize: 11, fill: 'var(--chart-tick)' }} tickFormatter={v => `$${v.toFixed(2)}`} />
                         <Tooltip
-                          contentStyle={{ background: '#131318', border: '1px solid #1f1f2e', borderRadius: 8 }}
-                          labelStyle={{ color: '#9ca3af', fontSize: 11 }}
+                          contentStyle={{
+                            background: 'var(--chart-tooltip-bg)',
+                            border: '1px solid var(--chart-tooltip-border)',
+                            borderRadius: 8,
+                            color: 'var(--text)',
+                          }}
+                          labelStyle={{ color: 'var(--label)', fontSize: 11 }}
                           formatter={(v) => [`$${Number(v ?? 0).toFixed(2)}`, 'Cumulative PnL']}
                         />
                         <Line
                           type="monotone"
                           dataKey="pnl"
-                          stroke="#00c9a7"
+                          stroke="var(--pos)"
                           strokeWidth={2}
                           dot={false}
-                          activeDot={{ r: 4, fill: '#00c9a7' }}
+                          activeDot={{ r: 4, fill: 'var(--pos)' }}
                         />
                       </LineChart>
                     </ResponsiveContainer>

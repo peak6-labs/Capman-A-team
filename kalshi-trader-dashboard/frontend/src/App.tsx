@@ -7,6 +7,14 @@ import PnL from './pages/PnL'
 import { getPortfolio, type PortfolioResponse } from './api'
 import './index.css'
 
+type Theme = 'dark' | 'light'
+
+function getInitialTheme(): Theme {
+  const saved = window.localStorage.getItem('theme')
+  if (saved === 'dark' || saved === 'light') return saved
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
+
 function NavAccountValues() {
   const [data, setData] = useState<PortfolioResponse | null>(null)
 
@@ -39,6 +47,30 @@ function NavAccountValues() {
   )
 }
 
+function ThemeToggle() {
+  const [theme, setTheme] = useState<Theme>(getInitialTheme)
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem('theme', theme)
+  }, [theme])
+
+  const nextTheme = theme === 'light' ? 'dark' : 'light'
+
+  return (
+    <button
+      className="theme-toggle"
+      type="button"
+      aria-label={`Switch to ${nextTheme} mode`}
+      title={`Switch to ${nextTheme} mode`}
+      onClick={() => setTheme(nextTheme)}
+    >
+      <span className={`theme-toggle-icon ${theme}`} aria-hidden="true" />
+      <span>{theme === 'light' ? 'Light' : 'Dark'}</span>
+    </button>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -49,6 +81,7 @@ export default function App() {
         <NavLink to="/trades">TRADES</NavLink>
         <NavLink to="/pnl">PNL</NavLink>
         <NavAccountValues />
+        <ThemeToggle />
       </nav>
       <Routes>
         <Route path="/" element={<Control />} />
