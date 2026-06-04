@@ -24,6 +24,12 @@ def _to_decimal(value) -> Optional[Decimal]:
     return Decimal(str(value))
 
 
+def _to_float(value) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
 class Market(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -47,6 +53,8 @@ class Market(BaseModel):
     strike_type: Optional[str] = None
 
     volume_fp: Optional[float] = None
+    volume_24h_fp: Optional[float] = None
+    open_interest_fp: Optional[float] = None
 
     yes_bid: Optional[Decimal] = Field(default=None, alias="yes_bid_dollars")
     yes_ask: Optional[Decimal] = Field(default=None, alias="yes_ask_dollars")
@@ -63,6 +71,11 @@ class Market(BaseModel):
     @classmethod
     def _parse_money(cls, v):
         return _to_decimal(v)
+
+    @field_validator("volume_fp", "volume_24h_fp", "open_interest_fp", mode="before")
+    @classmethod
+    def _parse_float(cls, v):
+        return _to_float(v)
 
 
 class Event(BaseModel):
@@ -134,7 +147,7 @@ class Balance(BaseModel):
 
     def usd(self) -> Optional[Decimal]:
         if self.balance_dollars is not None:
-            return Decimal(str(self.balance_dollars))
+            return self.balance_dollars
         if self.balance is not None:
             return Decimal(str(self.balance)) / Decimal("100")
         return None

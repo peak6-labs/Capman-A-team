@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
-from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -13,26 +13,40 @@ from pydantic import BaseModel
 from kalshi_agent_trader.client import KalshiError
 from kalshi_agent_trader.compliance import ComplianceGate
 from kalshi_agent_trader.market_data import MarketData
-from kalshi_agent_trader.risk import RiskGate
-from kalshi_agent_trader.util import hours_until, volume_fp
 
+from ..analyzers import SignalCandidate, find_short_expiry_liquid, find_tail_opportunities
 from ..config_writer import (
     clear_kill_switch,
     engage_kill_switch,
     kill_switch_engaged,
     set_dry_run,
 )
-from ..deps import cached, get_client, get_config, reset_client
+from ..deps import get_client, get_config, reset_client
 
-_SCAN_MIN_PRICE = Decimal("0.01")
-_SCAN_MAX_PRICE = Decimal("0.10")
-_SCAN_MIN_HOURS = 4.0
-_SCAN_MAX_HOURS = 48.0
-_SCAN_MAX_SPREAD = Decimal("0.50")
-_SCAN_MIN_VOLUME = 10.0
+_SCAN_PAGE_LIMIT = 1000
+_TAIL_THRESHOLD = 0.08
+_TAIL_MAX_SPREAD = 0.05
+_TAIL_MIN_VOL_24H = 100.0
+_TAIL_MIN_HOURS = 2.0
+_SEL_MAX_HOURS = 72.0
+_SEL_MIN_HOURS = 1.0
+_SEL_MIN_VOL_24H = 200.0
+_COMPLIANCE_CANDIDATE_LIMIT = 250
+_MIN_COMPLIANCE_LOOKUPS = 20
 _SIGNALS_TTL = 60  # seconds
+_SIGNALS_DEFAULT_LIMIT = 10
+_SIGNALS_ERROR_COOLDOWN_S = 60
+_SIGNALS_RATE_LIMIT_COOLDOWN_S = 180
 
 router = APIRouter(prefix="/control", tags=["control"])
+
+_signals_lock = threading.Lock()
+_signals_snapshot: dict[str, Any] | None = None
+_signals_running = False
+_signals_error: str | None = None
+_signals_started_at: int | None = None
+_signals_next_retry_at: int | None = None
+_signals_capacity = 0
 
 
 class KillRequest(BaseModel):
@@ -43,64 +57,170 @@ class DryRunRequest(BaseModel):
     dry_run: bool
 
 
-def scan_signal_candidates(cfg, client) -> dict[str, Any]:
+def _category_for_event(
+    md: MarketData,
+    event_ticker: str,
+    category_cache: dict[str, str | None],
+) -> str | None:
+    if event_ticker not in category_cache:
+        category_cache[event_ticker] = md.get_event(event_ticker).category
+    return category_cache[event_ticker]
+
+
+def _candidate_payload(candidate: SignalCandidate, category: str | None) -> dict[str, Any]:
+    return {
+        "ticker": candidate.ticker,
+        "title": candidate.title,
+        "category": category,
+        "side": candidate.side,
+        "price": str(candidate.price),
+        "spread": str(candidate.spread),
+        "score": candidate.score,
+        "hours_to_expiry": candidate.hours_left,
+        "volume_fp": float(candidate.volume_24h),
+    }
+
+
+def scan_signal_candidates(cfg, client, *, result_limit: int = 10) -> dict[str, Any]:
     md = MarketData(client)
     compliance = ComplianceGate(cfg.compliance)
+    all_markets = []
     candidates = []
     total_scanned = 0
-    cursor: Optional[str] = None
+    cursor = None
 
-    for _ in range(20):
-        markets, cursor = md.list_markets(status="open", limit=200, cursor=cursor)
-        for market in markets:
-            total_scanned += 1
-            result = compliance.check_market(market, md)
-            if not result.allowed:
-                continue
-            vol = volume_fp(market)
-            if vol < _SCAN_MIN_VOLUME:
-                continue
-            expiry = market.expected_expiration_time or market.expiration_time
-            hours = hours_until(expiry)
-            if hours is None or not (_SCAN_MIN_HOURS <= hours <= _SCAN_MAX_HOURS):
-                continue
-            best = None
-            for side, bid, ask in [
-                ("yes", market.yes_bid, market.yes_ask),
-                ("no", market.no_bid, market.no_ask),
-            ]:
-                if bid is None or not (_SCAN_MIN_PRICE <= bid <= _SCAN_MAX_PRICE):
-                    continue
-                if ask is None:
-                    continue
-                spread = ask - bid
-                if spread >= _SCAN_MAX_SPREAD:
-                    continue
-                if best is None or bid < Decimal(str(best["price"])):
-                    best = {
-                        "ticker": market.ticker,
-                        "title": market.title or market.ticker,
-                        "category": result.category,
-                        "side": side,
-                        "price": str(bid),
-                        "spread": str(spread),
-                        "score": round(float(bid) * hours, 3),
-                        "hours_to_expiry": round(hours, 1),
-                        "volume_fp": vol,
-                    }
-            if best:
-                candidates.append(best)
-        if not cursor:
+    while True:
+        markets, cursor = md.list_markets(status="open", limit=_SCAN_PAGE_LIMIT, cursor=cursor)
+        all_markets.extend(markets)
+        total_scanned += len(markets)
+        if not cursor or not markets:
             break
 
-    candidates.sort(key=lambda c: c["score"], reverse=True)
+    market_index = {market.ticker: market for market in all_markets}
+    tail_results = find_tail_opportunities(
+        all_markets,
+        tail_threshold=_TAIL_THRESHOLD,
+        max_spread=_TAIL_MAX_SPREAD,
+        min_volume_24h=_TAIL_MIN_VOL_24H,
+        min_hours=_TAIL_MIN_HOURS,
+    )
+    short_expiry_results = find_short_expiry_liquid(
+        all_markets,
+        max_hours=_SEL_MAX_HOURS,
+        min_hours=_SEL_MIN_HOURS,
+        min_volume_24h=_SEL_MIN_VOL_24H,
+    )
+
+    merged = []
+    seen = set()
+    for raw in [*tail_results, *short_expiry_results]:
+        if raw.ticker in seen:
+            continue
+        seen.add(raw.ticker)
+        merged.append(raw)
+
+    merged.sort(key=lambda raw: raw.score, reverse=True)
+    compliance_lookup_limit = min(
+        _COMPLIANCE_CANDIDATE_LIMIT,
+        max(_MIN_COMPLIANCE_LOOKUPS, result_limit * 6),
+    )
+    merged = merged[:compliance_lookup_limit]
+    event_categories: dict[str, str | None] = {}
+    for raw in merged:
+        market = market_index.get(raw.ticker)
+        if market is None:
+            continue
+        category = _category_for_event(md, market.event_ticker, event_categories)
+        result = compliance.evaluate(
+            category=category,
+            title=market.title or raw.title or "",
+        )
+        if not result.allowed:
+            continue
+        candidates.append(_candidate_payload(raw, result.category))
+        if len(candidates) >= result_limit:
+            break
+
     return {
         "scanned_at": int(time.time() * 1000),
         "total_scanned": total_scanned,
-        # Store all candidates; slice at return time so different limit values
-        # can reuse the same cached scan.
         "candidates": candidates,
     }
+
+
+def _scan_is_fresh(snapshot: dict[str, Any] | None) -> bool:
+    if not snapshot:
+        return False
+    scanned_at = snapshot.get("scanned_at")
+    return isinstance(scanned_at, int) and (time.time() * 1000 - scanned_at) < _SIGNALS_TTL * 1000
+
+
+def _run_signals_scan(cfg, result_limit: int) -> None:
+    global _signals_snapshot, _signals_running, _signals_error, _signals_next_retry_at, _signals_capacity
+
+    try:
+        snapshot = scan_signal_candidates(cfg, get_client(), result_limit=result_limit)
+    except Exception as exc:
+        cooldown_s = (
+            _SIGNALS_RATE_LIMIT_COOLDOWN_S
+            if isinstance(exc, KalshiError) and exc.status == 429
+            else _SIGNALS_ERROR_COOLDOWN_S
+        )
+        with _signals_lock:
+            _signals_error = str(exc)
+            _signals_next_retry_at = int((time.time() + cooldown_s) * 1000)
+    else:
+        with _signals_lock:
+            _signals_snapshot = snapshot
+            _signals_error = None
+            _signals_next_retry_at = None
+            _signals_capacity = result_limit
+    finally:
+        with _signals_lock:
+            _signals_running = False
+
+
+def _ensure_signals_scan(cfg, result_limit: int) -> None:
+    global _signals_running, _signals_started_at
+
+    with _signals_lock:
+        now_ms = int(time.time() * 1000)
+        if _signals_running:
+            return
+        if _signals_capacity >= result_limit and _scan_is_fresh(_signals_snapshot):
+            return
+        if _signals_next_retry_at and now_ms < _signals_next_retry_at:
+            return
+        _signals_running = True
+        _signals_started_at = now_ms
+
+    thread = threading.Thread(
+        target=_run_signals_scan,
+        args=(cfg, result_limit),
+        daemon=True,
+        name="signal-scan",
+    )
+    thread.start()
+
+
+def _signals_response(limit: int) -> dict[str, Any]:
+    with _signals_lock:
+        snapshot = dict(_signals_snapshot) if _signals_snapshot else {
+            "scanned_at": 0,
+            "total_scanned": 0,
+            "candidates": [],
+        }
+        running = _signals_running
+        error = _signals_error
+        started_at = _signals_started_at
+        next_retry_at = _signals_next_retry_at
+
+    snapshot["candidates"] = snapshot.get("candidates", [])[:limit]
+    snapshot["scan_status"] = "running" if running else "error" if error else "ready"
+    snapshot["scan_error"] = error
+    snapshot["scan_started_at"] = started_at
+    snapshot["scan_next_retry_at"] = next_retry_at
+    return snapshot
 
 
 @router.get("/status")
@@ -161,13 +281,12 @@ def toggle_dry_run(req: DryRunRequest):
 
 
 @router.get("/signals")
-def live_signals(limit: int = Query(default=10, ge=1, le=50)):
-    """Scan open markets and return top cheap-tail candidates. Cached for 60 seconds."""
-    cfg = get_config()
-    client = get_client()
-
-    try:
-        full = cached("signals", _SIGNALS_TTL, lambda: scan_signal_candidates(cfg, client))
-        return {**full, "candidates": full["candidates"][:limit]}
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+def live_signals(
+    limit: int = Query(default=10, ge=1, le=50),
+    refresh: bool = Query(default=False),
+):
+    """Start or observe the all-market signal scan without blocking the UI."""
+    if refresh:
+        cfg = get_config()
+        _ensure_signals_scan(cfg, max(limit, _SIGNALS_DEFAULT_LIMIT))
+    return _signals_response(limit)

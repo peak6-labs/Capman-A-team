@@ -1,26 +1,42 @@
 const BASE = '/api'
+const DEFAULT_TIMEOUT_MS = 30_000
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`)
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
-  return res.json()
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const res = await fetch(`${BASE}${path}`, { ...init, signal: controller.signal })
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+    return res.json()
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`, { cause: error })
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+async function get<T>(path: string, timeoutMs?: number): Promise<T> {
+  return request<T>(path, {}, timeoutMs)
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  return request<T>(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
-  return res.json()
 }
 
 // Control
 export const getControlStatus = () => get<ControlStatus>('/control/status')
 export const setKillSwitch = (engaged: boolean) => post<{ kill_switch_engaged: boolean }>('/control/kill', { engaged })
 export const setDryRun = (dry_run: boolean) => post<{ dry_run: boolean }>('/control/dry-run', { dry_run })
-export const getSignals = (limit = 10) => get<SignalsResponse>(`/control/signals?limit=${limit}`)
+export const getSignals = (limit = 10, refresh = false) =>
+  get<SignalsResponse>(`/control/signals?limit=${limit}&refresh=${refresh ? 'true' : 'false'}`, 60_000)
 
 // Portfolio
 export const getPortfolio = () => get<PortfolioResponse>('/portfolio')
@@ -59,9 +75,15 @@ export const getPnlCalibration = () => get<PnlCalibration>('/pnl/calibration')
 export interface ControlStatus {
   kill_switch_engaged: boolean
   dry_run: boolean
-  exchange: Record<string, unknown>
+  exchange: ExchangeStatus
   auth: { credentials_present: boolean; auth_ok: boolean; error: string | null }
   username: string
+}
+
+export interface ExchangeStatus {
+  exchange_active?: boolean
+  trading_active?: boolean
+  error?: string
 }
 
 export interface SignalCandidate {
@@ -80,6 +102,10 @@ export interface SignalsResponse {
   scanned_at: number
   total_scanned: number
   candidates: SignalCandidate[]
+  scan_status?: 'ready' | 'running' | 'error'
+  scan_error?: string | null
+  scan_started_at?: number | null
+  scan_next_retry_at?: number | null
 }
 
 export interface Position {

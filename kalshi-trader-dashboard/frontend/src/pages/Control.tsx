@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getControlStatus, setKillSwitch, setDryRun, getSignals, getCurrentTrades, type ControlStatus, type SignalsResponse, type CurrentTrades } from '../api'
 import AgentChat from '../components/AgentChat'
 import MarketCell from '../components/MarketCell'
@@ -25,8 +25,12 @@ export default function Control() {
   const [signals, setSignals] = useState<SignalsResponse | null>(null)
   const [signalsLoading, setSignalsLoading] = useState(false)
   const [signalsError, setSignalsError] = useState<string | null>(null)
+  const [signalsCoolingDown, setSignalsCoolingDown] = useState(false)
+  const signalsPollRef = useRef<number | null>(null)
+  const signalsCooldownRef = useRef<number | null>(null)
 
   const [positions, setPositions] = useState<CurrentTrades | null>(null)
+  const [positionsError, setPositionsError] = useState<string | null>(null)
 
   const refresh = () => {
     setLoading(true)
@@ -36,45 +40,79 @@ export default function Control() {
       .finally(() => setLoading(false))
   }
 
-  const loadSignals = () => {
-    setSignalsLoading(true)
-    getSignals()
-      .then(s => { setSignals(s); setSignalsError(null) })
-      .catch(e => setSignalsError(String(e)))
-      .finally(() => setSignalsLoading(false))
+  const clearSignalsPoll = () => {
+    if (signalsPollRef.current !== null) {
+      window.clearTimeout(signalsPollRef.current)
+      signalsPollRef.current = null
+    }
+  }
+
+  const clearSignalsCooldown = () => {
+    if (signalsCooldownRef.current !== null) {
+      window.clearTimeout(signalsCooldownRef.current)
+      signalsCooldownRef.current = null
+    }
+  }
+
+  const loadSignals = (isPoll = false) => {
+    clearSignalsPoll()
+    clearSignalsCooldown()
+    if (!isPoll) setSignalsLoading(true)
+    getSignals(10, !isPoll)
+      .then(s => {
+        setSignals(s)
+        const retryAt = s.scan_next_retry_at ? new Date(s.scan_next_retry_at) : null
+        const retryMs = retryAt ? retryAt.getTime() - Date.now() : 0
+        const retryText = retryAt && retryMs > 0
+          ? ` Retry after ${retryAt.toLocaleTimeString()}.`
+          : ''
+        setSignalsError(s.scan_error ? `${s.scan_error}${retryText}` : null)
+        setSignalsCoolingDown(retryMs > 0)
+        if (retryMs > 0) {
+          signalsCooldownRef.current = window.setTimeout(() => setSignalsCoolingDown(false), retryMs)
+        }
+        if (s.scan_status === 'running') {
+          setSignalsLoading(true)
+          signalsPollRef.current = window.setTimeout(() => loadSignals(true), 3_000)
+        } else {
+          setSignalsLoading(false)
+        }
+      })
+      .catch(e => {
+        setSignalsError(String(e))
+        setSignalsLoading(false)
+      })
   }
 
   const loadPositions = () => {
     getCurrentTrades()
-      .then(d => setPositions(d))
-      .catch(() => {})
+      .then(d => { setPositions(d); setPositionsError(null) })
+      .catch(e => setPositionsError(String(e)))
   }
 
   useEffect(() => {
     queueMicrotask(() => { refresh(); loadPositions() })
     const id = setInterval(() => { refresh(); loadPositions() }, 30_000)
-    return () => clearInterval(id)
+    return () => {
+      clearInterval(id)
+      clearSignalsPoll()
+      clearSignalsCooldown()
+    }
   }, [])
 
-  const toggleKill = async () => {
+  const updateStatus = async (fn: () => Promise<Partial<ControlStatus>>) => {
     if (!status) return
     setBusy(true)
     try {
-      const res = await setKillSwitch(!status.kill_switch_engaged)
-      setStatus(s => s ? { ...s, kill_switch_engaged: res.kill_switch_engaged } : s)
+      const patch = await fn()
+      setStatus(s => s ? { ...s, ...patch } : s)
     } catch (e) { setError(String(e)) }
     setBusy(false)
   }
 
-  const toggleDryRun = async () => {
-    if (!status) return
-    setBusy(true)
-    try {
-      const res = await setDryRun(!status.dry_run)
-      setStatus(s => s ? { ...s, dry_run: res.dry_run } : s)
-    } catch (e) { setError(String(e)) }
-    setBusy(false)
-  }
+  const toggleKill = () => updateStatus(() => setKillSwitch(!status!.kill_switch_engaged))
+
+  const toggleDryRun = () => updateStatus(() => setDryRun(!status!.dry_run))
 
   const exchangeActive = status?.exchange?.exchange_active === true || status?.exchange?.trading_active === true
 
@@ -183,6 +221,7 @@ export default function Control() {
               </h2>
               <button className="btn btn-gray home-card-btn" onClick={loadPositions}>Refresh</button>
             </div>
+            {positionsError && <p className="error">{positionsError}</p>}
             {!positions ? (
               <p className="muted">Loading…</p>
             ) : positions.open_positions.length === 0 ? (
@@ -221,19 +260,19 @@ export default function Control() {
                   <span className="home-count-chip">{signals.candidates.length}</span>
                 )}
               </h2>
-              <button className="btn btn-gray home-card-btn" onClick={loadSignals} disabled={signalsLoading}>
+              <button className="btn btn-gray home-card-btn" onClick={() => loadSignals()} disabled={signalsLoading || signalsCoolingDown}>
                 {signalsLoading ? <span className="spinner" /> : 'Scan Now'}
               </button>
             </div>
 
             {signalsError && <p className="error">{signalsError}</p>}
 
-            {!signals && !signalsLoading ? (
+            {!signals && !signalsLoading && !signalsError ? (
               <p className="muted">Click "Scan Now" to screen open markets for candidates.</p>
-            ) : signalsLoading && !signals ? (
-              <p className="muted">Scanning markets…</p>
+            ) : (signalsLoading || signals?.scan_status === 'running') && (!signals || signals.candidates.length === 0) ? (
+              <p className="muted">Scanning all open markets…</p>
             ) : signals && signals.candidates.length === 0 ? (
-              <p className="muted">No candidates matching cheap-tail criteria (1–10¢, 4–48h expiry).</p>
+              <p className="muted">No compliant liquid candidates found across open markets.</p>
             ) : signals ? (
               <>
                 <div style={{ overflowX: 'auto' }}>
@@ -265,7 +304,7 @@ export default function Control() {
                   </table>
                 </div>
                 <p className="muted" style={{ marginTop: '0.5rem', fontSize: '0.7rem' }}>
-                  Score = price × hours · cached 60s · passes compliance + liquidity + time filters
+                  Tail signal strength · cached 60s · passes compliance + liquidity + time filters
                 </p>
               </>
             ) : null}
