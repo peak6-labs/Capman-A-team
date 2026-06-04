@@ -1,16 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getPortfolio, type PortfolioResponse, type Position } from '../api'
-import { parseTicker } from '../tickerUtils'
-
-function MarketCell({ ticker }: { ticker: string | null | undefined }) {
-  const { label, detail } = parseTicker(ticker)
-  return (
-    <div>
-      <div style={{ fontWeight: 500, fontSize: '0.8125rem' }}>{label}</div>
-      {detail && <div className="muted" style={{ marginTop: 2 }}>{detail}</div>}
-    </div>
-  )
-}
+import MarketCell from '../components/MarketCell'
+import { PositionSideBadge, SideBadge } from '../components/TradeBadges'
 
 function fmt(v: string | null | undefined, sign = false) {
   if (v == null) return '—'
@@ -55,18 +46,6 @@ function sumField(positions: Position[], field: keyof Position) {
   }, 0)
 }
 
-function SideChip({ position }: { position: string | null }) {
-  if (!position) return <span className="muted">—</span>
-  const n = parseFloat(position)
-  if (isNaN(n)) return <span>{position}</span>
-  const isYes = n > 0
-  return (
-    <span className={`side-badge ${isYes ? 'yes' : 'no'}`}>
-      {isYes ? 'Yes' : 'No'} · {Math.abs(n)}
-    </span>
-  )
-}
-
 export default function Portfolio() {
   const [data, setData] = useState<PortfolioResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -84,7 +63,7 @@ export default function Portfolio() {
   }
 
   useEffect(() => {
-    refresh()
+    queueMicrotask(refresh)
     const id = setInterval(refresh, 30_000)
     return () => clearInterval(id)
   }, [])
@@ -199,7 +178,7 @@ export default function Portfolio() {
                       return (
                         <tr key={i}>
                           <td><MarketCell ticker={p.ticker} /></td>
-                          <td><SideChip position={p.position} /></td>
+                          <td><PositionSideBadge position={p.position} /></td>
                           <td>{avg != null ? `${(avg * 100).toFixed(1)}¢` : '—'}</td>
                           <td>{fmt(p.cost_usd)}</td>
                           <td className={pnlClass(p.realized_pnl_usd)}>{fmt(p.realized_pnl_usd, true)}</td>
@@ -253,9 +232,7 @@ export default function Portfolio() {
                       <td><MarketCell ticker={o.ticker} /></td>
                       <td>{o.action}</td>
                       <td>
-                        {o.side
-                          ? <span className={`side-badge ${o.side.toLowerCase() === 'yes' ? 'yes' : 'no'}`}>{o.side}</span>
-                          : '—'}
+                        <SideBadge side={o.side} />
                       </td>
                       <td>{fmt(o.price_usd)}</td>
                       <td>{o.count ?? '—'}</td>

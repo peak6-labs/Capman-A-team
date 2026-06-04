@@ -117,7 +117,6 @@ def cumulative_pnl_series(
     for f in sorted_fills:
         price = _dec(f.get("price_dollars") or f.get("price", 0))
         count = _dec(f.get("count", 0))
-        side = str(f.get("side", "yes")).lower()
         action = str(f.get("action", "buy")).lower()
 
         # Fill is a buy if action=="buy"; otherwise a sell.

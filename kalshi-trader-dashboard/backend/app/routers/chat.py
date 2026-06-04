@@ -5,12 +5,18 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kalshi_agent_trader.portfolio import Portfolio
 
-from ..deps import get_client, get_config
+from ..config_writer import kill_switch_engaged
+from ..deps import cached, get_client, get_config
 from ..kalshi_tools import EXECUTOR_TOOLS, RESEARCH_TOOLS, execute_tool
+
+try:
+    import anthropic as _anthropic
+except ImportError:
+    _anthropic = None
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -54,40 +60,54 @@ Operator: {username}
 {context}"""
 
 _MAX_TOOL_ITERATIONS = 5
+_CONTEXT_TTL = 30
 
 
 def _build_context(client) -> str:
-    try:
-        cfg = get_config()
-        kill = getattr(cfg, "kill_switch_engaged", False)
-        dry_run = getattr(cfg, "dry_run", True)
-        positions = Portfolio(client).market_positions()
-    except Exception:
-        return "Portfolio context unavailable."
+    def _load() -> str:
+        try:
+            cfg = get_config()
+            kill = kill_switch_engaged()
+            dry_run = cfg.risk.dry_run
+            positions = Portfolio(client).market_positions()
+        except Exception:
+            return "Portfolio context unavailable."
 
-    lines = [
-        f"Kill switch: {'ENGAGED' if kill else 'clear'}",
-        f"Mode: {'dry run (no live orders)' if dry_run else 'LIVE'}",
-        f"Open positions: {len(positions)}",
-    ]
-    for p in positions[:10]:
-        ticker = p.get("ticker", "?")
-        pos = p.get("position_fp")
-        exposure = p.get("market_exposure_dollars") or p.get("position_cost_dollars")
-        lines.append(
-            f"  • {ticker}  pos={pos}  exposure=${float(exposure or 0):.2f}"
-        )
-    if len(positions) > 10:
-        lines.append(f"  … and {len(positions) - 10} more")
-    return "\n".join(lines)
+        lines = [
+            f"Kill switch: {'ENGAGED' if kill else 'clear'}",
+            f"Mode: {'dry run (no live orders)' if dry_run else 'LIVE'}",
+            f"Open positions: {len(positions)}",
+        ]
+        for p in positions[:10]:
+            ticker = p.get("ticker", "?")
+            pos = p.get("position_fp")
+            exposure = p.get("market_exposure_dollars") or p.get("position_cost_dollars")
+            lines.append(
+                f"  • {ticker}  pos={pos}  exposure=${float(exposure or 0):.2f}"
+            )
+        if len(positions) > 10:
+            lines.append(f"  … and {len(positions) - 10} more")
+        return "\n".join(lines)
+
+    return cached("chat_context", _CONTEXT_TTL, _load)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatImage(BaseModel):
+    media_type: str
+    data: str
 
 
 class ChatRequest(BaseModel):
     message: str
     agent: Literal["executor", "research"] = "research"
-    history: list[dict] = []
+    history: list[ChatMessage] = Field(default_factory=list)
     username: str = "operator"
-    images: list[dict] = []  # [{media_type: str, data: str}]
+    images: list[ChatImage] = Field(default_factory=list)
 
 
 @router.post("")
@@ -100,9 +120,7 @@ def chat(req: ChatRequest):
             detail="ANTHROPIC_API_KEY is not set. Add it to kalshi-agent-trader/.env to enable agent chat.",
         )
 
-    try:
-        import anthropic
-    except ImportError:
+    if _anthropic is None:
         raise HTTPException(
             status_code=503,
             detail="anthropic package not installed. Run: pip install anthropic",
@@ -115,13 +133,13 @@ def chat(req: ChatRequest):
     tools = EXECUTOR_TOOLS if req.agent == "executor" else RESEARCH_TOOLS
 
     messages = [
-        {"role": m["role"], "content": m["content"]}
+        {"role": m.role, "content": m.content}
         for m in req.history
-        if m.get("role") in ("user", "assistant") and m.get("content")
+        if m.content
     ]
     if req.images:
         user_content = [
-            {"type": "image", "source": {"type": "base64", "media_type": img["media_type"], "data": img["data"]}}
+            {"type": "image", "source": {"type": "base64", "media_type": img.media_type, "data": img.data}}
             for img in req.images
         ] + [{"type": "text", "text": req.message}]
     else:
@@ -129,7 +147,7 @@ def chat(req: ChatRequest):
     messages.append({"role": "user", "content": user_content})
 
     try:
-        ac = anthropic.Anthropic(api_key=api_key, base_url="https://api.anthropic.com")
+        ac = _anthropic.Anthropic(api_key=api_key, base_url="https://api.anthropic.com")
 
         for _ in range(_MAX_TOOL_ITERATIONS):
             resp = ac.messages.create(

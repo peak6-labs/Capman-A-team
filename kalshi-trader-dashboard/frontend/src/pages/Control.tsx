@@ -1,23 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import { getControlStatus, setKillSwitch, setDryRun, getSignals, getCurrentTrades, sendChat, type ControlStatus, type SignalsResponse, type CurrentTrades, type ChatMessage, type ChatImageAttachment } from '../api'
-import { parseTicker } from '../tickerUtils'
-
-function SideBadge({ side }: { side: string }) {
-  const isYes = side.toLowerCase() === 'yes'
-  return <span className={`side-badge ${isYes ? 'yes' : 'no'}`}>{side.toUpperCase()}</span>
-}
-
-function MarketCell({ ticker, title }: { ticker: string; title: string }) {
-  const { label, detail } = parseTicker(ticker)
-  const display = label !== ticker ? label : title
-  return (
-    <div>
-      <div style={{ fontWeight: 500, fontSize: '0.8125rem' }}>{display}</div>
-      {detail && <div className="muted" style={{ marginTop: 2 }}>{detail}</div>}
-    </div>
-  )
-}
+import { useEffect, useState } from 'react'
+import { getControlStatus, setKillSwitch, setDryRun, getSignals, getCurrentTrades, type ControlStatus, type SignalsResponse, type CurrentTrades } from '../api'
+import AgentChat from '../components/AgentChat'
+import MarketCell from '../components/MarketCell'
+import { PositionSideBadge, SideBadge } from '../components/TradeBadges'
 
 function StatusDot({ ok }: { ok: boolean }) {
   return (
@@ -43,22 +28,6 @@ export default function Control() {
 
   const [positions, setPositions] = useState<CurrentTrades | null>(null)
 
-  const [chatHistories, setChatHistories] = useState<Record<'executor' | 'research', ChatMessage[]>>({ executor: [], research: [] })
-  const [chatInput, setChatInput] = useState('')
-  const [chatAgent, setChatAgent] = useState<'executor' | 'research'>('research')
-  const [chatBusy, setChatBusy] = useState(false)
-  const [chatError, setChatError] = useState<string | null>(null)
-  const [attachedImages, setAttachedImages] = useState<Array<{ preview: string; attachment: ChatImageAttachment }>>([])
-  const chatEndRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  const chatMessages = chatHistories[chatAgent]
-
-  const switchAgent = (agent: 'executor' | 'research') => {
-    setChatAgent(agent)
-    setChatError(null)
-  }
-
   const refresh = () => {
     setLoading(true)
     getControlStatus()
@@ -82,53 +51,10 @@ export default function Control() {
   }
 
   useEffect(() => {
-    refresh()
-    loadPositions()
+    queueMicrotask(() => { refresh(); loadPositions() })
     const id = setInterval(() => { refresh(); loadPositions() }, 30_000)
     return () => clearInterval(id)
   }, [])
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [chatMessages])
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? [])
-    e.target.value = ''
-    files.forEach(file => {
-      const reader = new FileReader()
-      reader.onload = ev => {
-        const dataUrl = ev.target?.result as string
-        const [header, data] = dataUrl.split(',')
-        const media_type = header.match(/:(.*?);/)?.[1] ?? 'image/jpeg'
-        setAttachedImages(prev => [...prev, { preview: dataUrl, attachment: { media_type, data } }])
-      }
-      reader.readAsDataURL(file)
-    })
-  }
-
-  const sendMessage = async () => {
-    const text = chatInput.trim()
-    if ((!text && attachedImages.length === 0) || chatBusy) return
-    const agent = chatAgent
-    const prev = chatHistories[agent]
-    const previews = attachedImages.map(a => a.preview)
-    const images = attachedImages.map(a => a.attachment)
-    const userMsg: ChatMessage = { role: 'user', content: text, imagePreviews: previews.length ? previews : undefined }
-    const nextHistory = [...prev, userMsg]
-    setChatHistories(h => ({ ...h, [agent]: nextHistory }))
-    setChatInput('')
-    setAttachedImages([])
-    setChatBusy(true)
-    setChatError(null)
-    try {
-      const { reply } = await sendChat(text, agent, prev, status?.username ?? 'operator', images)
-      setChatHistories(h => ({ ...h, [agent]: [...nextHistory, { role: 'assistant', content: reply }] }))
-    } catch (e) {
-      setChatError(String(e))
-    }
-    setChatBusy(false)
-  }
 
   const toggleKill = async () => {
     if (!status) return
@@ -272,14 +198,8 @@ export default function Control() {
                   <tbody>
                     {positions.open_positions.map((p, i) => (
                       <tr key={i}>
-                        <td><MarketCell ticker={p.ticker} title={p.ticker} /></td>
-                        <td>
-                          {p.position != null ? (
-                            <span className={`side-badge ${parseFloat(p.position) >= 0 ? 'yes' : 'no'}`}>
-                              {parseFloat(p.position) >= 0 ? 'Yes' : 'No'} · {Math.abs(parseFloat(p.position))}
-                            </span>
-                          ) : '—'}
-                        </td>
+                        <td><MarketCell ticker={p.ticker} fallbackTitle={p.ticker} /></td>
+                        <td><PositionSideBadge position={p.position} /></td>
                         <td>{p.exposure_usd ? `$${parseFloat(p.exposure_usd).toFixed(2)}` : '—'}</td>
                         <td className={p.realized_pnl_usd && parseFloat(p.realized_pnl_usd) >= 0 ? 'pos' : 'neg'}>
                           {p.realized_pnl_usd ? `$${parseFloat(p.realized_pnl_usd).toFixed(2)}` : '—'}
@@ -332,9 +252,9 @@ export default function Control() {
                     <tbody>
                       {signals.candidates.map((c, i) => (
                         <tr key={i}>
-                          <td><MarketCell ticker={c.ticker} title={c.title} /></td>
+                          <td><MarketCell ticker={c.ticker} fallbackTitle={c.title} /></td>
                           <td><span className="badge badge-gray">{c.category ?? '—'}</span></td>
-                          <td><SideBadge side={c.side} /></td>
+                          <td><SideBadge side={c.side} uppercase /></td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>{(parseFloat(c.price) * 100).toFixed(1)}¢</td>
                           <td className="muted" style={{ fontVariantNumeric: 'tabular-nums' }}>{(parseFloat(c.spread) * 100).toFixed(1)}¢</td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>{c.score.toFixed(3)}</td>
@@ -354,121 +274,7 @@ export default function Control() {
 
         {/* ── Right column: Agent Chat ── */}
         <div className="home-right">
-          <div className="card home-chat-card">
-            <div className="home-card-header" style={{ marginBottom: '0.75rem' }}>
-              <h2 style={{ margin: 0 }}>Agent Chat</h2>
-              <div style={{ display: 'flex', gap: '0.375rem' }}>
-                <button
-                  className={`btn home-agent-btn ${chatAgent === 'research' ? 'home-agent-btn-active' : ''}`}
-                  onClick={() => switchAgent('research')}
-                >
-                  Research
-                </button>
-                <button
-                  className={`btn home-agent-btn ${chatAgent === 'executor' ? 'home-agent-btn-active' : ''}`}
-                  onClick={() => switchAgent('executor')}
-                >
-                  Executor
-                </button>
-              </div>
-            </div>
-
-            <div className="chat-messages home-chat-messages">
-              {chatMessages.length === 0 && (
-                <div className="home-chat-empty">
-                  <span style={{ fontSize: '1.5rem', opacity: 0.3 }}>
-                    {chatAgent === 'research' ? '🔬' : '⚡'}
-                  </span>
-                  <p className="muted" style={{ fontSize: '0.8125rem', fontStyle: 'italic', marginTop: '0.5rem' }}>
-                    Ask the {chatAgent} agent anything…
-                  </p>
-                </div>
-              )}
-              {chatMessages.map((m, i) => (
-                <div key={i} className={`chat-bubble chat-bubble-${m.role}`}>
-                  <span className="chat-role">
-                    {m.role === 'user' ? (status?.username ?? 'you') : chatAgent === 'executor' ? 'Executor' : 'Research'}
-                  </span>
-                  {m.imagePreviews && m.imagePreviews.length > 0 && (
-                    <div className="chat-image-previews">
-                      {m.imagePreviews.map((src, j) => (
-                        <img key={j} src={src} className="chat-bubble-image" alt="attached" />
-                      ))}
-                    </div>
-                  )}
-                  {m.role === 'assistant' ? (
-                    <div className="chat-content chat-md">
-                      <ReactMarkdown>{m.content}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    m.content ? <span className="chat-content">{m.content}</span> : null
-                  )}
-                </div>
-              ))}
-              {chatBusy && (
-                <div className="chat-bubble chat-bubble-assistant">
-                  <span className="chat-role">{chatAgent === 'executor' ? 'Executor' : 'Research'}</span>
-                  <span className="chat-content home-thinking">
-                    <span className="home-thinking-dot" /><span className="home-thinking-dot" /><span className="home-thinking-dot" />
-                  </span>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            {chatError && <p className="error" style={{ marginTop: '0.5rem', fontSize: '0.8125rem' }}>{chatError}</p>}
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{ display: 'none' }}
-              onChange={handleFileChange}
-            />
-            {attachedImages.length > 0 && (
-              <div className="chat-attach-preview-row">
-                {attachedImages.map((img, i) => (
-                  <div key={i} className="chat-attach-thumb-wrap">
-                    <img src={img.preview} className="chat-attach-thumb" alt="attachment" />
-                    <button
-                      className="chat-attach-remove"
-                      onClick={() => setAttachedImages(prev => prev.filter((_, j) => j !== i))}
-                      title="Remove"
-                    >✕</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="chat-input-row">
-              <button
-                className="btn btn-gray chat-attach-btn"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={chatBusy}
-                title="Attach image"
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.42 16.41a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                </svg>
-              </button>
-              <input
-                className="chat-input"
-                type="text"
-                placeholder={`Message ${chatAgent} agent…`}
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') sendMessage() }}
-                disabled={chatBusy}
-              />
-              <button
-                className="btn btn-brand"
-                onClick={sendMessage}
-                disabled={chatBusy || (!chatInput.trim() && attachedImages.length === 0)}
-              >
-                {chatBusy ? <span className="spinner" /> : 'Send →'}
-              </button>
-            </div>
-          </div>
+          <AgentChat username={status?.username} />
         </div>
       </div>
     </div>

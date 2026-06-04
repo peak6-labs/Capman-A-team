@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
@@ -52,21 +52,23 @@ export default function PnL() {
       .finally(() => setLoading(false))
   }
 
-  const loadCalibration = () => {
+  const loadCalibration = useCallback(() => {
     if (calibration) return
     setLoading(true)
     getPnlCalibration()
       .then(c => { setCalibration(c); setError(null) })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
-  }
+  }, [calibration])
 
   useEffect(() => {
-    refresh()
+    queueMicrotask(refresh)
     const id = setInterval(refresh, 30_000)
     return () => clearInterval(id)
   }, [])
-  useEffect(() => { if (tab === 'calibration') loadCalibration() }, [tab])
+  useEffect(() => {
+    if (tab === 'calibration') queueMicrotask(loadCalibration)
+  }, [tab, loadCalibration])
 
   const chartData = series?.points.map(p => ({
     time: new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),

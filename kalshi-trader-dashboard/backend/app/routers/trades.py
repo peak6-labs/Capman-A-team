@@ -8,33 +8,9 @@ from kalshi_agent_trader.journal import Journal
 from kalshi_agent_trader.portfolio import Portfolio
 
 from ..deps import get_client
+from ..serializers import normalize_fill, normalize_order, normalize_position
 
 router = APIRouter(prefix="/trades", tags=["trades"])
-
-
-def _fmt(value) -> str | None:
-    return str(value) if value is not None else None
-
-
-def _norm_ts(raw) -> int | None:
-    """Normalize any Kalshi timestamp to milliseconds for JavaScript Date()."""
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        from datetime import datetime
-        try:
-            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            return int(dt.timestamp() * 1000)
-        except Exception:
-            return None
-    v = int(raw)
-    if v > 10**16:      # nanoseconds (~1.7e18 in 2026)
-        return v // 1_000_000
-    if v > 10**13:      # microseconds (~1.7e15 in 2026)
-        return v // 1_000
-    if v > 10**10:      # milliseconds (~1.7e12 in 2026)
-        return v
-    return v * 1000     # seconds
 
 
 @router.get("/current")
@@ -49,29 +25,12 @@ def current_trades():
 
     return {
         "open_positions": [
-            {
-                "ticker": p.get("ticker"),
-                "position": _fmt(p.get("position_fp")),
-                "exposure_usd": _fmt(p.get("market_exposure_dollars")),
-                "cost_usd": _fmt(
-                    p.get("total_traded_dollars") or p.get("position_cost_dollars")
-                ),
-                "realized_pnl_usd": _fmt(p.get("realized_pnl_dollars")),
-                "raw": p,
-            }
-            for p in positions
+            p for p in (normalize_position(p) for p in positions)
+            if p is not None
         ],
         "resting_orders": [
-            {
-                "ticker": o.get("ticker"),
-                "action": o.get("action"),
-                "side": o.get("side"),
-                "price_usd": _fmt(o.get("price_dollars")),
-                "count": _fmt(o.get("count")),
-                "status": o.get("status"),
-                "raw": o,
-            }
-            for o in resting
+            o for o in (normalize_order(o) for o in resting)
+            if o is not None
         ],
     }
 
@@ -86,17 +45,8 @@ def trade_history(limit: int = Query(default=200, ge=1, le=1000)):
         raise HTTPException(status_code=502, detail=f"Kalshi fills fetch failed: {exc}")
 
     fills = [
-        {
-            "ts": _norm_ts(f.get("ts") or f.get("created_time")),
-            "ticker": f.get("ticker") or f.get("market_ticker"),
-            "side": f.get("side"),
-            "action": f.get("action"),
-            "count": _fmt(f.get("count")),
-            "price_usd": _fmt(f.get("price_dollars") or f.get("price")),
-            "fill_id": f.get("fill_id") or f.get("id"),
-            "raw": f,
-        }
-        for f in fills_raw[:limit]
+        f for f in (normalize_fill(f) for f in fills_raw[:limit])
+        if f is not None
     ]
 
     # Journal decisions (incl. dry_run + rejected — the full audit trail).

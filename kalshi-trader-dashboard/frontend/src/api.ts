@@ -89,17 +89,15 @@ export interface Position {
   cost_usd: string | null
   realized_pnl_usd: string | null
   unrealized_pnl_usd: string | null
-  raw: Record<string, unknown>
 }
 
 export interface Order {
   ticker: string
-  action: string
-  side: string
+  action: string | null
+  side: string | null
   price_usd: string | null
   count: string | null
   status: string | null
-  raw: Record<string, unknown>
 }
 
 export interface PortfolioResponse {
@@ -115,14 +113,13 @@ export interface CurrentTrades {
 }
 
 export interface Fill {
-  ts: number | null
-  ticker: string | null
+  ts: number
+  ticker: string
   side: string | null
   action: string | null
   count: string | null
   price_usd: string | null
   fill_id: string | null
-  raw: Record<string, unknown>
 }
 
 export interface Decision {

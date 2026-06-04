@@ -12,10 +12,6 @@ from kalshi_agent_trader.config import load_config
 _client_lock = threading.Lock()
 _shared_client: Optional[KalshiClient] = None
 
-# Protect config.yaml writes
-config_write_lock = threading.Lock()
-
-
 def get_config():
     """Fresh config read on every call (no in-process cache; load_config re-reads YAML)."""
     return load_config()
@@ -58,10 +54,9 @@ def cached(key: str, ttl_seconds: int, fn: Callable[[], T]) -> T:
         entry = _cache.get(key)
         if entry and (time.time() - entry[0]) < ttl_seconds:
             return entry[1]
-    result = fn()
-    with _cache_lock:
+        result = fn()
         _cache[key] = (time.time(), result)
-    return result
+        return result
 
 
 def invalidate_cache(key: str) -> None:

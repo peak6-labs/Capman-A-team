@@ -13,7 +13,7 @@ import contextlib
 import io
 import json
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from kalshi_agent_trader.client import KalshiClient
 from kalshi_agent_trader.compliance import ComplianceGate
@@ -156,25 +156,46 @@ def _cancel_order(inp: dict, client: KalshiClient, cfg: AppConfig) -> str:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+ToolHandler = Callable[[Dict[str, Any], KalshiClient, AppConfig], str]
+
+_HANDLERS: dict[str, ToolHandler] = {
+    "list_markets": lambda inp, client, cfg: _list_markets(inp, client),
+    "get_orderbook": lambda inp, client, cfg: _get_orderbook(inp, client),
+    "get_events": lambda inp, client, cfg: _get_events(inp, client),
+    "get_positions": lambda inp, client, cfg: _get_positions(inp, client),
+    "run_three_leg_screen": lambda inp, client, cfg: _run_three_leg_screen(inp),
+    "get_account_status": lambda inp, client, cfg: _get_account_status(inp, client),
+    "submit_order": _submit_order,
+    "cancel_order": _cancel_order,
+}
+
+
+def _tool_schema(name: str) -> dict | None:
+    for tool in EXECUTOR_TOOLS:
+        if tool.get("name") == name:
+            return tool.get("input_schema")
+    return None
+
+
+def _validate_tool_input(name: str, inp: Dict[str, Any]) -> str | None:
+    schema = _tool_schema(name)
+    if schema is None:
+        return f"unknown tool: {name}"
+    missing = [field for field in schema.get("required", []) if field not in inp]
+    if missing:
+        return f"missing required field(s): {', '.join(missing)}"
+    return None
+
+
 def execute_tool(name: str, inp: Dict[str, Any], client: KalshiClient, cfg: AppConfig) -> str:
-    try:
-        if name == "list_markets":
-            return _list_markets(inp, client)
-        if name == "get_orderbook":
-            return _get_orderbook(inp, client)
-        if name == "get_events":
-            return _get_events(inp, client)
-        if name == "get_positions":
-            return _get_positions(inp, client)
-        if name == "run_three_leg_screen":
-            return _run_three_leg_screen(inp)
-        if name == "get_account_status":
-            return _get_account_status(inp, client)
-        if name == "submit_order":
-            return _submit_order(inp, client, cfg)
-        if name == "cancel_order":
-            return _cancel_order(inp, client, cfg)
+    handler = _HANDLERS.get(name)
+    if handler is None:
         return _j({"error": f"unknown tool: {name}"})
+    validation_error = _validate_tool_input(name, inp)
+    if validation_error:
+        return _j({"error": validation_error})
+    try:
+        return handler(inp, client, cfg)
     except Exception as exc:
         return _j({"error": str(exc)})
 

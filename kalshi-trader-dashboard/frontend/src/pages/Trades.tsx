@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getCurrentTrades, getTradeHistory, type CurrentTrades, type TradeHistory } from '../api'
-import { parseTicker } from '../tickerUtils'
+import MarketCell from '../components/MarketCell'
+import { ActionBadge, PositionSideBadge, SideBadge } from '../components/TradeBadges'
 
 function ts(v: number | null | undefined) {
   if (!v) return '—'
@@ -21,27 +22,6 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
     outcome === 'dry_run' ? 'badge-orange' :
     'badge-gray'
   return <span className={`badge ${cls}`}>{outcome}</span>
-}
-
-function SideBadge({ side }: { side: string | null }) {
-  if (!side) return <span className="muted">—</span>
-  const isYes = side.toLowerCase() === 'yes'
-  return <span className={`side-badge ${isYes ? 'yes' : 'no'}`}>{side}</span>
-}
-
-function ActionBadge({ action }: { action: string | null }) {
-  if (!action) return <span className="muted">—</span>
-  return <span className="badge badge-gray">{action}</span>
-}
-
-function MarketCell({ ticker }: { ticker: string | null | undefined }) {
-  const { label, detail } = parseTicker(ticker)
-  return (
-    <div>
-      <div style={{ fontWeight: 500, fontSize: '0.8125rem' }}>{label}</div>
-      {detail && <div className="muted" style={{ marginTop: 2 }}>{detail}</div>}
-    </div>
-  )
 }
 
 export default function Trades() {
@@ -71,11 +51,11 @@ export default function Trades() {
 
   useEffect(() => {
     if (tab === 'current') {
-      loadCurrent()
+      queueMicrotask(loadCurrent)
       const id = setInterval(loadCurrent, 30_000)
       return () => clearInterval(id)
     } else {
-      loadHistory()
+      queueMicrotask(loadHistory)
     }
   }, [tab])
 
@@ -112,13 +92,7 @@ export default function Trades() {
                     {current.open_positions.map((p, i) => (
                       <tr key={i}>
                         <td><MarketCell ticker={p.ticker} /></td>
-                        <td>
-                          {p.position != null ? (
-                            <span className={`side-badge ${parseFloat(p.position) >= 0 ? 'yes' : 'no'}`}>
-                              {parseFloat(p.position) >= 0 ? 'Yes' : 'No'} · {Math.abs(parseFloat(p.position))}
-                            </span>
-                          ) : '—'}
-                        </td>
+                        <td><PositionSideBadge position={p.position} /></td>
                         <td>{p.exposure_usd ? `$${parseFloat(p.exposure_usd).toFixed(2)}` : '—'}</td>
                         <td>{p.cost_usd ? `$${parseFloat(p.cost_usd).toFixed(2)}` : '—'}</td>
                         <td className={p.realized_pnl_usd && parseFloat(p.realized_pnl_usd) >= 0 ? 'pos' : 'neg'}>

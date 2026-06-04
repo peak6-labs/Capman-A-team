@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
+import threading
 from pathlib import Path
 
 from kalshi_agent_trader.config import load_config
@@ -18,6 +18,7 @@ from kalshi_agent_trader.risk import KILL_SWITCH_PATH
 
 # Derived from the package's own PROJECT_ROOT (repo root), which is always correct.
 _CONFIG_YAML = PROJECT_ROOT / "config.yaml"
+_CONFIG_WRITE_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -42,14 +43,14 @@ def kill_switch_engaged() -> bool:
 # dry_run toggle
 # ---------------------------------------------------------------------------
 
-def set_dry_run(value: bool, lock) -> bool:
+def set_dry_run(value: bool) -> bool:
     """Toggle risk.dry_run in config.yaml preserving all comments.
 
     Finds the `risk:` section, then the first `dry_run:` line within it, and
     replaces only that line's boolean value. Writes atomically via a temp file
     + os.replace. Returns the value re-read from disk.
     """
-    with lock:
+    with _CONFIG_WRITE_LOCK:
         lines = _CONFIG_YAML.read_text().splitlines(keepends=True)
         in_risk_section = False
         replaced = False

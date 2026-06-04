@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException
@@ -14,14 +15,45 @@ from kalshi_agent_trader.portfolio import Portfolio
 
 from ..deps import cached, get_client
 from ..pnl import cumulative_pnl_series, realized_usd, unrealized_usd
+from ..serializers import fmt_decimal
 
 router = APIRouter(prefix="/pnl", tags=["pnl"])
 
 _CALIBRATION_TTL = 300  # 5 minutes
 
 
-def _fmt(value: Decimal | None) -> str | None:
-    return str(value) if value is not None else None
+def _mid_for_ticker(md: MarketData, ticker: str) -> tuple[str, Decimal | None]:
+    try:
+        market = md.get_market(ticker)
+        bid = market.yes_bid
+        ask = market.yes_ask
+        if bid is not None and ask is not None:
+            return ticker, (bid + ask) / 2
+        return ticker, market.last_price
+    except Exception:
+        return ticker, None
+
+
+def _yes_mids_for_positions(client, positions: list[dict]) -> dict[str, Decimal]:
+    needs_mid = {
+        p["ticker"]
+        for p in positions
+        if p.get("ticker")
+        and p.get("unrealized_pnl_dollars") is None
+        and p.get("position_fp") not in (None, "0", 0)
+    }
+    if not needs_mid:
+        return {}
+
+    md = MarketData(client)
+    yes_mids: dict[str, Decimal] = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(needs_mid))) as pool:
+        futures = [pool.submit(_mid_for_ticker, md, ticker) for ticker in needs_mid]
+        for future in as_completed(futures):
+            ticker, mid = future.result()
+            if mid is not None:
+                yes_mids[ticker] = mid
+    return yes_mids
 
 
 @router.get("/summary")
@@ -36,33 +68,14 @@ def pnl_summary():
     r_usd = realized_usd(positions)
 
     # Build YES mids for positions that don't supply unrealized_pnl_dollars.
-    needs_mid = [
-        p["ticker"]
-        for p in positions
-        if p.get("unrealized_pnl_dollars") is None and p.get("position_fp") not in (None, "0", 0)
-    ]
-    yes_mids: dict[str, Decimal] = {}
-    if needs_mid:
-        md = MarketData(client)
-        for ticker in needs_mid:
-            try:
-                market = md.get_market(ticker)
-                bid = market.yes_bid
-                ask = market.yes_ask
-                if bid is not None and ask is not None:
-                    yes_mids[ticker] = (bid + ask) / 2
-                elif market.last_price is not None:
-                    yes_mids[ticker] = market.last_price
-            except Exception:
-                pass  # leave mid absent; unrealized contribution = 0
-
+    yes_mids = _yes_mids_for_positions(client, positions)
     u_usd = unrealized_usd(positions, yes_mids)
     total = r_usd + u_usd
 
     return {
-        "realized_usd": _fmt(r_usd),
-        "unrealized_usd": _fmt(u_usd),
-        "total_usd": _fmt(total),
+        "realized_usd": fmt_decimal(r_usd),
+        "unrealized_usd": fmt_decimal(u_usd),
+        "total_usd": fmt_decimal(total),
         "as_of": int(time.time() * 1000),
     }
 
@@ -85,7 +98,7 @@ def pnl_timeseries():
 
     return {
         "points": series,
-        "current_unrealized_usd": _fmt(u_usd),
+        "current_unrealized_usd": fmt_decimal(u_usd),
     }
 
 
