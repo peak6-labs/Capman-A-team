@@ -44,7 +44,7 @@ export default function App() {
     <BrowserRouter>
       <nav>
         <span className="brand"><span className="brand-kalshi">Kalshi</span><span className="brand-sub">Trader Dashboard</span></span>
-        <NavLink to="/" end>CONTROL</NavLink>
+        <NavLink to="/" end>HOME</NavLink>
         <NavLink to="/portfolio">PORTFOLIO</NavLink>
         <NavLink to="/trades">TRADES</NavLink>
         <NavLink to="/pnl">PNL</NavLink>

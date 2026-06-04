@@ -30,8 +30,25 @@ export const getCurrentTrades = () => get<CurrentTrades>('/trades/current')
 export const getTradeHistory = (limit = 200) => get<TradeHistory>(`/trades/history?limit=${limit}`)
 
 // Chat
-export const sendChat = (message: string, agent: 'executor' | 'research', history: ChatMessage[], username: string) =>
-  post<{ reply: string }>('/chat', { message, agent, history, username })
+export interface ChatImageAttachment {
+  media_type: string  // e.g. 'image/jpeg'
+  data: string        // base64-encoded, no data-URL prefix
+}
+
+export const sendChat = (
+  message: string,
+  agent: 'executor' | 'research',
+  history: ChatMessage[],
+  username: string,
+  images: ChatImageAttachment[] = [],
+) =>
+  post<{ reply: string }>('/chat', {
+    message,
+    agent,
+    history: history.map(({ role, content }) => ({ role, content })),
+    username,
+    images,
+  })
 
 // PnL
 export const getPnlSummary = () => get<PnlSummary>('/pnl/summary')
@@ -154,6 +171,7 @@ export interface CalibrationBucket {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  imagePreviews?: string[]  // data URLs for display only — not sent to backend
 }
 
 export interface PnlCalibration {
