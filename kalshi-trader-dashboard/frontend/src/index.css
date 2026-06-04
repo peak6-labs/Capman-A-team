@@ -140,11 +140,20 @@ nav a {
 nav a:hover { color: var(--text); }
 nav a.active { color: var(--text); border-bottom-color: var(--brand); }
 
-nav .nav-right {
+.nav-actions {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: 1rem;
+}
+
+nav .nav-right {
+  display: flex;
+  align-items: center;
+  gap: 1.125rem;
+  padding-right: 1rem;
+  border-right: 1px solid var(--border);
+  min-height: 30px;
 }
 
 nav .nav-account {
@@ -161,25 +170,25 @@ nav .nav-account .nav-sublabel { font-size: 0.6875rem; color: var(--muted); }
 .theme-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  min-height: 30px;
-  padding: 0.25rem 0.65rem 0.25rem 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--label);
+  justify-content: center;
+  width: 38px;
+  height: 32px;
+  padding: 0.25rem;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text);
   font-family: var(--font-sans);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  box-shadow: var(--card-shadow);
+  transition: color 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
 .theme-toggle:hover {
+  background: var(--surface3);
+  border-color: var(--brand-border);
   color: var(--heading);
-  border-color: var(--border2);
+  transform: translateY(-1px);
 }
 
 .theme-toggle:focus-visible {
@@ -191,9 +200,10 @@ nav .nav-account .nav-sublabel { font-size: 0.6875rem; color: var(--muted); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
   background: var(--brand-bg);
   border: 1px solid var(--brand-border);
   color: var(--brand);

@@ -66,7 +66,6 @@ function ThemeToggle() {
       onClick={() => setTheme(nextTheme)}
     >
       <span className={`theme-toggle-icon ${theme}`} aria-hidden="true" />
-      <span>{theme === 'light' ? 'Light' : 'Dark'}</span>
     </button>
   )
 }
@@ -80,8 +79,10 @@ export default function App() {
         <NavLink to="/portfolio">PORTFOLIO</NavLink>
         <NavLink to="/trades">TRADES</NavLink>
         <NavLink to="/pnl">PNL</NavLink>
-        <NavAccountValues />
-        <ThemeToggle />
+        <div className="nav-actions">
+          <NavAccountValues />
+          <ThemeToggle />
+        </div>
       </nav>
       <Routes>
         <Route path="/" element={<Control />} />
