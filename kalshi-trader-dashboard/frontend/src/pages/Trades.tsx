@@ -15,6 +15,25 @@ function pct(v: number | null | undefined) {
   return `${(v * 100).toFixed(1)}%`
 }
 
+function cents(v: string | null | undefined) {
+  if (!v) return '—'
+  const n = parseFloat(v)
+  if (isNaN(n)) return v
+  return `${(n * 100).toFixed(1)}¢`
+}
+
+function money(v: string | null | undefined) {
+  if (!v) return '—'
+  const n = parseFloat(v)
+  if (isNaN(n)) return v
+  return `$${n.toFixed(2)}`
+}
+
+function shortId(v: string | null | undefined) {
+  if (!v) return '—'
+  return v.length > 10 ? `${v.slice(0, 8)}…` : v
+}
+
 function OutcomeBadge({ outcome }: { outcome: string }) {
   const cls =
     outcome === 'placed' ? 'badge-green' :
@@ -91,7 +110,7 @@ export default function Trades() {
                   <tbody>
                     {current.open_positions.map((p, i) => (
                       <tr key={i}>
-                        <td><MarketCell ticker={p.ticker} /></td>
+                        <td><MarketCell ticker={p.ticker} name={p.name} title={p.title} /></td>
                         <td><PositionSideBadge position={p.position} /></td>
                         <td>{p.exposure_usd ? `$${parseFloat(p.exposure_usd).toFixed(2)}` : '—'}</td>
                         <td>{p.cost_usd ? `$${parseFloat(p.cost_usd).toFixed(2)}` : '—'}</td>
@@ -119,7 +138,7 @@ export default function Trades() {
                   <tbody>
                     {current.resting_orders.map((o, i) => (
                       <tr key={i}>
-                        <td><MarketCell ticker={o.ticker} /></td>
+                        <td><MarketCell ticker={o.ticker} name={o.name} title={o.title} /></td>
                         <td><ActionBadge action={o.action} /></td>
                         <td><SideBadge side={o.side} /></td>
                         <td>{o.price_usd ? `$${parseFloat(o.price_usd).toFixed(2)}` : '—'}</td>
@@ -156,25 +175,32 @@ export default function Trades() {
               {history.fills.length === 0
                 ? <p className="muted">No fills on record.</p>
                 : (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Time</th><th>Market</th><th>Side</th><th>Action</th><th>Count</th><th>Price</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {history.fills.map((f, i) => (
-                        <tr key={i}>
-                          <td className="muted" style={{ whiteSpace: 'nowrap' }}>{ts(f.ts)}</td>
-                          <td><MarketCell ticker={f.ticker} /></td>
-                          <td><SideBadge side={f.side ?? null} /></td>
-                          <td><ActionBadge action={f.action ?? null} /></td>
-                          <td>{f.count ?? '—'}</td>
-                          <td>{f.price_usd ? `${(parseFloat(f.price_usd) * 100).toFixed(1)}¢` : '—'}</td>
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Time</th><th>Market</th><th>Side</th><th>Action</th><th>Count</th>
+                          <th>YES Price</th><th>NO Price</th><th>Fee</th><th>Role</th><th>Fill</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {history.fills.map((f, i) => (
+                          <tr key={f.fill_id ?? i}>
+                            <td className="muted" style={{ whiteSpace: 'nowrap' }}>{ts(f.ts)}</td>
+                            <td><MarketCell ticker={f.ticker} name={f.name} title={f.title} /></td>
+                            <td><SideBadge side={f.side ?? null} /></td>
+                            <td><ActionBadge action={f.action ?? null} /></td>
+                            <td>{f.count ?? '—'}</td>
+                            <td>{cents(f.yes_price_usd ?? f.price_usd)}</td>
+                            <td>{cents(f.no_price_usd)}</td>
+                            <td>{money(f.fee_usd)}</td>
+                            <td><span className="badge badge-gray">{f.is_taker == null ? '—' : f.is_taker ? 'taker' : 'maker'}</span></td>
+                            <td className="muted" title={f.fill_id ?? undefined}>{shortId(f.fill_id)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
             </div>
           )}
@@ -184,27 +210,33 @@ export default function Trades() {
               {history.decisions.length === 0
                 ? <p className="muted">No decisions in journal.</p>
                 : (
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Time</th><th>Market</th><th>Side</th><th>Outcome</th>
-                        <th>Confidence</th><th>Gate</th><th>Reason</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {history.decisions.map((d, i) => (
-                        <tr key={i}>
-                          <td className="muted" style={{ whiteSpace: 'nowrap' }}>{ts(d.ts)}</td>
-                          <td><MarketCell ticker={d.market_ticker} /></td>
-                          <td><SideBadge side={d.side ?? null} /></td>
-                          <td><OutcomeBadge outcome={d.outcome} /></td>
-                          <td>{pct(d.confidence)}</td>
-                          <td className="muted">{d.gate ?? '—'}</td>
-                          <td className="muted" style={{ maxWidth: 240, wordBreak: 'break-word' }}>{d.reason ?? '—'}</td>
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Time</th><th>Source</th><th>Market</th><th>Side</th><th>Target</th>
+                          <th>Fair</th><th>Confidence</th><th>Max</th><th>Outcome</th><th>Gate</th><th>Reason</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {history.decisions.map((d, i) => (
+                          <tr key={i}>
+                            <td className="muted" style={{ whiteSpace: 'nowrap' }}>{ts(d.ts)}</td>
+                            <td className="muted">{d.source ?? '—'}</td>
+                            <td><MarketCell ticker={d.market_ticker} name={d.name} title={d.title} /></td>
+                            <td><SideBadge side={d.side ?? null} /></td>
+                            <td>{cents(d.target_price)}</td>
+                            <td>{pct(d.fair_prob)}</td>
+                            <td>{pct(d.confidence)}</td>
+                            <td>{d.max_contracts ?? '—'}</td>
+                            <td><OutcomeBadge outcome={d.outcome} /></td>
+                            <td className="muted">{d.gate ?? '—'}</td>
+                            <td className="muted" style={{ maxWidth: 280, wordBreak: 'break-word' }}>{d.reason ?? '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
             </div>
           )}

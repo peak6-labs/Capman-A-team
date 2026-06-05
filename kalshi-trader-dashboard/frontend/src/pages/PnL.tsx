@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+  Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  getPnlSummary, getPnlTimeseries, getPnlCalibration,
-  type PnlSummary, type PnlTimeseries, type PnlCalibration
+  getPnlCalibration, getPnlDaily, getPnlSummary, getPnlTrades,
+  type PnlCalibration, type PnlDaily, type PnlSummary, type PnlTrade, type PnlTrades,
 } from '../api'
+import MarketCell from '../components/MarketCell'
 
 function fmt(v: string | null | undefined) {
   if (v == null) return '—'
@@ -15,11 +17,33 @@ function fmt(v: string | null | undefined) {
   return `${sign}$${n.toFixed(2)}`
 }
 
+function fmtMoney(v: string | null | undefined) {
+  if (v == null) return '—'
+  const n = parseFloat(v)
+  if (isNaN(n)) return v
+  return `$${n.toFixed(2)}`
+}
+
+function fmtCount(v: string | null | undefined) {
+  if (v == null) return '—'
+  const n = parseFloat(v)
+  if (isNaN(n)) return v
+  return n.toLocaleString(undefined, { maximumFractionDigits: 4 })
+}
+
 function fmtClass(v: string | null | undefined) {
   if (!v) return ''
   const n = parseFloat(v)
   if (isNaN(n)) return ''
   return n >= 0 ? 'pos' : 'neg'
+}
+
+function dateFromIso(v: string) {
+  return new Date(`${v}T00:00:00`)
+}
+
+function dayLabel(v: string) {
+  return dateFromIso(v).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 function CalibBucket({ b }: { b: { label: string; count: number; brier: number | null; mean_predicted: number | null; mean_realized: number | null } }) {
@@ -35,9 +59,22 @@ function CalibBucket({ b }: { b: { label: string; count: number; brier: number |
   )
 }
 
+function signedReturn(trade: PnlTrade) {
+  const amount = fmt(trade.total_return_usd)
+  const pct = parseFloat(trade.total_return_pct)
+  if (isNaN(pct)) return amount
+  const sign = pct > 0 ? '+' : ''
+  return `${amount} (${sign}${pct.toFixed(0)}%)`
+}
+
+function sideClass(side: string | null | undefined) {
+  return side?.toLowerCase() === 'yes' ? 'yes' : 'no'
+}
+
 export default function PnL() {
   const [summary, setSummary] = useState<PnlSummary | null>(null)
-  const [series, setSeries] = useState<PnlTimeseries | null>(null)
+  const [daily, setDaily] = useState<PnlDaily | null>(null)
+  const [trades, setTrades] = useState<PnlTrades | null>(null)
   const [calibration, setCalibration] = useState<PnlCalibration | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -46,8 +83,14 @@ export default function PnL() {
 
   const refresh = () => {
     setLoading(true)
-    Promise.all([getPnlSummary(), getPnlTimeseries()])
-      .then(([s, ts]) => { setSummary(s); setSeries(ts); setError(null); setLastUpdated(new Date()) })
+    Promise.all([getPnlSummary(), getPnlDaily(), getPnlTrades()])
+      .then(([summaryData, dailyData, tradeData]) => {
+        setSummary(summaryData)
+        setDaily(dailyData)
+        setTrades(tradeData)
+        setError(null)
+        setLastUpdated(new Date())
+      })
       .catch(e => setError(String(e)))
       .finally(() => setLoading(false))
   }
@@ -70,10 +113,32 @@ export default function PnL() {
     if (tab === 'calibration') queueMicrotask(loadCalibration)
   }, [tab, loadCalibration])
 
-  const chartData = series?.points.map(p => ({
-    time: new Date(p.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-    pnl: parseFloat(p.cumulative_realized_usd),
-  })) ?? []
+  const chartData = useMemo(() => (
+    daily?.points.map(p => ({
+      day: dayLabel(p.date),
+      daily: parseFloat(p.realized_usd),
+      cumulative: parseFloat(p.cumulative_realized_usd),
+    })) ?? []
+  ), [daily])
+
+  const profitableDays = chartData.filter(p => p.daily > 0).length
+  const losingDays = chartData.filter(p => p.daily < 0).length
+  const historyGroups = useMemo(() => {
+    const map = new Map<string, PnlTrade[]>()
+    for (const trade of trades?.trades ?? []) {
+      const key = trade.group_title || trade.title || trade.ticker
+      map.set(key, [...(map.get(key) ?? []), trade])
+    }
+    return Array.from(map.entries()).map(([title, rows]) => ({
+      title,
+      rows,
+      lastOrderAt: Math.max(...rows.map(row => row.last_order_at || 0)),
+      settlement: rows.reduce((sum, row) => sum + parseFloat(row.settlement_payout_usd ?? '0'), 0),
+      cost: rows.reduce((sum, row) => sum + parseFloat(row.total_cost_usd ?? '0'), 0),
+      payout: rows.reduce((sum, row) => sum + parseFloat(row.total_payout_usd ?? '0'), 0),
+      totalReturn: rows.reduce((sum, row) => sum + parseFloat(row.total_return_usd ?? '0'), 0),
+    })).sort((a, b) => b.lastOrderAt - a.lastOrderAt)
+  }, [trades])
 
   return (
     <div className="page">
@@ -93,32 +158,42 @@ export default function PnL() {
         <>
           {loading && !summary ? <span className="spinner" /> : summary && (
             <>
-              {/* Inline stat row */}
-              <div style={{ display: 'flex', gap: '2.5rem', marginBottom: '1.75rem', alignItems: 'flex-start' }}>
-                <div>
-                  <div className="stat-label">Realized PnL</div>
-                  <div className={`stat-value ${fmtClass(summary.realized_usd)}`}>{fmt(summary.realized_usd)}</div>
+              <div className="card pnl-chart-card">
+                <div className="pnl-chart-header">
+                  <div>
+                    <h2>Daily PnL Since {daily ? dayLabel(daily.start_date) : 'Jun 1'}</h2>
+                    <div className="pnl-chart-substats">
+                      <span>Started {fmtMoney(summary.starting_bankroll_usd)}</span>
+                      <span>Account {fmtMoney(summary.account_value_usd)}</span>
+                      <span>{profitableDays} up day{profitableDays !== 1 ? 's' : ''}</span>
+                      <span>{losingDays} down day{losingDays !== 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
+                  <div className="pnl-stat-strip">
+                    <div>
+                      <div className="stat-label">Cash PnL</div>
+                      <div className={`stat-value compact ${fmtClass(summary.realized_usd)}`}>{fmt(summary.realized_usd)}</div>
+                    </div>
+                    <div>
+                      <div className="stat-label">Open Value</div>
+                      <div className={`stat-value compact ${fmtClass(summary.unrealized_usd)}`}>{fmt(summary.unrealized_usd)}</div>
+                    </div>
+                    <div>
+                      <div className="stat-label">Total PnL</div>
+                      <div className={`stat-value compact ${fmtClass(summary.total_usd)}`}>{fmt(summary.total_usd)}</div>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <div className="stat-label">Unrealized PnL</div>
-                  <div className={`stat-value ${fmtClass(summary.unrealized_usd)}`}>{fmt(summary.unrealized_usd)}</div>
-                </div>
-                <div>
-                  <div className="stat-label">Total PnL</div>
-                  <div className={`stat-value ${fmtClass(summary.total_usd)}`}>{fmt(summary.total_usd)}</div>
-                </div>
-              </div>
 
-              <div className="card">
-                <h2>Cumulative Realized PnL</h2>
                 {chartData.length === 0
                   ? <p className="muted">No fill history to chart yet.</p>
                   : (
-                    <ResponsiveContainer width="100%" height={280}>
-                      <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <ResponsiveContainer width="100%" height={320}>
+                      <ComposedChart data={chartData} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-                        <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--chart-tick)' }} />
-                        <YAxis tick={{ fontSize: 11, fill: 'var(--chart-tick)' }} tickFormatter={v => `$${v.toFixed(2)}`} />
+                        <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--chart-tick)' }} />
+                        <YAxis yAxisId="left" tick={{ fontSize: 11, fill: 'var(--chart-tick)' }} tickFormatter={v => `$${Number(v).toFixed(0)}`} />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: 'var(--chart-tick)' }} tickFormatter={v => `$${Number(v).toFixed(0)}`} />
                         <Tooltip
                           contentStyle={{
                             background: 'var(--chart-tooltip-bg)',
@@ -127,25 +202,107 @@ export default function PnL() {
                             color: 'var(--text)',
                           }}
                           labelStyle={{ color: 'var(--label)', fontSize: 11 }}
-                          formatter={(v) => [`$${Number(v ?? 0).toFixed(2)}`, 'Cumulative PnL']}
+                          formatter={(value, name) => [
+                            `$${Number(value ?? 0).toFixed(2)}`,
+                            name === 'daily' ? 'Daily PnL' : 'Cumulative PnL',
+                          ]}
                         />
+                        <ReferenceLine yAxisId="left" y={0} stroke="var(--border2)" />
+                        <Bar yAxisId="left" dataKey="daily" radius={[4, 4, 0, 0]}>
+                          {chartData.map((point, index) => (
+                            <Cell key={`cell-${index}`} fill={point.daily >= 0 ? 'var(--pos)' : 'var(--neg)'} />
+                          ))}
+                        </Bar>
                         <Line
+                          yAxisId="right"
                           type="monotone"
-                          dataKey="pnl"
-                          stroke="var(--pos)"
+                          dataKey="cumulative"
+                          stroke="var(--brand)"
                           strokeWidth={2}
-                          dot={false}
-                          activeDot={{ r: 4, fill: 'var(--pos)' }}
+                          dot={{ r: 3, fill: 'var(--brand)' }}
+                          activeDot={{ r: 5, fill: 'var(--brand)' }}
                         />
-                      </LineChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                   )}
-                {series && (
-                  <p className="muted" style={{ marginTop: '0.75rem' }}>
-                    Current unrealized: {fmt(series.current_unrealized_usd)}&ensp;·&ensp;
-                    {chartData.length} fill event{chartData.length !== 1 ? 's' : ''}
-                  </p>
-                )}
+              </div>
+
+              <div className="card pnl-history-card">
+                <h2>History ({trades?.trades.length ?? 0})</h2>
+                {!trades || trades.trades.length === 0
+                  ? <p className="muted">No portfolio history on record.</p>
+                  : (
+                    <div className="table-scroll">
+                      <table className="pnl-history-table">
+                        <thead>
+                          <tr>
+                            <th>Market</th>
+                            <th>Final position</th>
+                            <th>Settlement payout</th>
+                            <th>Total cost</th>
+                            <th>Total payout</th>
+                            <th>Total return</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historyGroups.map(group => {
+                            const groupPct = group.cost ? group.totalReturn / group.cost * 100 : 0
+                            if (group.rows.length === 1) {
+                              const trade = group.rows[0]
+                              return (
+                                <tr key={group.title} className="pnl-history-row">
+                                  <td>
+                                    <MarketCell ticker={trade.ticker} name={trade.name} title={group.title} />
+                                  </td>
+                                  <td className={sideClass(trade.held_side)}>
+                                    {fmtCount(trade.entry_count)} {trade.held_side ? trade.held_side.toUpperCase() : '—'}
+                                  </td>
+                                  <td className={fmtClass(trade.settlement_payout_usd)}>{fmt(trade.settlement_payout_usd)}</td>
+                                  <td>{fmt(trade.total_cost_usd)}</td>
+                                  <td>{fmt(trade.total_payout_usd)}</td>
+                                  <td className={fmtClass(trade.total_return_usd)}>{signedReturn(trade)}</td>
+                                </tr>
+                              )
+                            }
+                            return (
+                              <Fragment key={group.title}>
+                                <tr className="pnl-history-group">
+                                  <td colSpan={6}>
+                                    <MarketCell ticker={group.rows[0]?.ticker} title={group.title} />
+                                  </td>
+                                </tr>
+                                {group.rows.map(trade => (
+                                  <tr key={`${trade.ticker}-${trade.held_side ?? 'side'}`} className="pnl-history-row">
+                                    <td>
+                                      <div>{trade.name || trade.ticker}</div>
+                                      <div className="muted">{trade.status === 'open' ? 'Open' : trade.settlement_result ? `${trade.settlement_result.toUpperCase()} settled` : 'Closed'}</div>
+                                    </td>
+                                    <td className={sideClass(trade.held_side)}>
+                                      {fmtCount(trade.entry_count)} {trade.held_side ? trade.held_side.toUpperCase() : '—'}
+                                    </td>
+                                    <td className={fmtClass(trade.settlement_payout_usd)}>{fmt(trade.settlement_payout_usd)}</td>
+                                    <td>{fmt(trade.total_cost_usd)}</td>
+                                    <td>{fmt(trade.total_payout_usd)}</td>
+                                    <td className={fmtClass(trade.total_return_usd)}>{signedReturn(trade)}</td>
+                                  </tr>
+                                ))}
+                                <tr className="pnl-history-total">
+                                  <td>Total</td>
+                                  <td />
+                                  <td>{fmt(String(group.settlement))}</td>
+                                  <td>{fmt(String(group.cost))}</td>
+                                  <td>{fmt(String(group.payout))}</td>
+                                  <td className={group.totalReturn >= 0 ? 'pos' : 'neg'}>
+                                    {fmt(String(group.totalReturn))} ({groupPct > 0 ? '+' : ''}{groupPct.toFixed(0)}%)
+                                  </td>
+                                </tr>
+                              </Fragment>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
               </div>
             </>
           )}

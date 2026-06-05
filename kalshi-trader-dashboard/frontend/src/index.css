@@ -258,6 +258,110 @@ h2 { font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(-
 
 .stat-label { font-size: 0.6875rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .stat-value { font-size: 1.5rem; font-weight: 700; margin-top: 0.25rem; }
+.stat-value.compact { font-size: 1.125rem; }
+
+/* ── PnL ── */
+.pnl-chart-card {
+  padding-bottom: 0.875rem;
+}
+
+.pnl-chart-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.pnl-chart-substats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.pnl-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(90px, auto));
+  gap: 1.25rem;
+  text-align: right;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.pnl-orders {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 260px;
+  max-width: 360px;
+}
+
+.pnl-order {
+  display: grid;
+  grid-template-columns: minmax(92px, 1fr) auto auto minmax(86px, auto);
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+}
+
+.pnl-order-time {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pnl-history-card {
+  padding-top: 1rem;
+}
+
+.pnl-history-table th,
+.pnl-history-table td {
+  padding: 0.7rem 0.875rem;
+}
+
+.pnl-history-table th:nth-child(n+2),
+.pnl-history-table td:nth-child(n+2) {
+  text-align: right;
+}
+
+.pnl-history-group td {
+  padding-top: 1rem;
+  padding-bottom: 0.9rem;
+  background: var(--surface);
+}
+
+.pnl-history-group + .pnl-history-row td:first-child,
+.pnl-history-row + .pnl-history-row td:first-child {
+  padding-left: 1.25rem;
+}
+
+.pnl-history-row .yes {
+  color: var(--pos);
+}
+
+.pnl-history-row .no {
+  color: var(--neg);
+}
+
+.pnl-history-total td {
+  border-top: 1px solid var(--border2);
+  font-weight: 600;
+  background: var(--surface-hover);
+}
+
+@media (max-width: 900px) {
+  .pnl-chart-header {
+    flex-direction: column;
+  }
+
+  .pnl-stat-strip {
+    width: 100%;
+    text-align: left;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
 
 /* ── Portfolio hero ── */
 .portfolio-hero {

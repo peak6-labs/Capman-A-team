@@ -177,7 +177,7 @@ export default function Portfolio() {
                       const retPct = fmtPct(String(ret), p.cost_usd)
                       return (
                         <tr key={i}>
-                          <td><MarketCell ticker={p.ticker} /></td>
+                          <td><MarketCell ticker={p.ticker} name={p.name} title={p.title} /></td>
                           <td><PositionSideBadge position={p.position} /></td>
                           <td>{avg != null ? `${(avg * 100).toFixed(1)}¢` : '—'}</td>
                           <td>{fmt(p.cost_usd)}</td>
@@ -229,7 +229,7 @@ export default function Portfolio() {
                 <tbody>
                   {data.resting_orders.map((o, i) => (
                     <tr key={i}>
-                      <td><MarketCell ticker={o.ticker} /></td>
+                      <td><MarketCell ticker={o.ticker} name={o.name} title={o.title} /></td>
                       <td>{o.action}</td>
                       <td>
                         <SideBadge side={o.side} />
