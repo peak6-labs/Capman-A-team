@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from kalshi_agent_trader.portfolio import Portfolio
 
 from ..deps import get_client
+from ..market_meta import market_meta
 from ..serializers import fmt, normalize_order, normalize_position
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
@@ -23,12 +24,16 @@ def get_portfolio():
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
+    meta = market_meta(
+        client, [p.get("ticker") for p in positions] + [o.get("ticker") for o in resting]
+    )
+
     open_positions = [
-        p for p in (normalize_position(p) for p in positions)
+        p for p in (normalize_position(p, meta.get(p.get("ticker"))) for p in positions)
         if p is not None
     ]
     resting_orders = [
-        o for o in (normalize_order(o) for o in resting)
+        o for o in (normalize_order(o, meta.get(o.get("ticker"))) for o in resting)
         if o is not None
     ]
 

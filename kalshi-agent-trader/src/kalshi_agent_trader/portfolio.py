@@ -4,6 +4,8 @@ Verified response shapes (June 2026):
   /portfolio/balance   -> {"balance": <cents>, "balance_dollars": "..", "portfolio_value": <cents>, ...}
   /portfolio/positions -> {"market_positions": [...], "event_positions": [...], "cursor": ".."}
   /portfolio/fills     -> {"fills": [...], "cursor": ".."}
+  /historical/fills    -> {"fills": [...], "cursor": ".."} (older fills past cutoff)
+  /portfolio/settlements -> {"settlements": [...], "cursor": ".."}
   /portfolio/orders    -> {"orders": [...], "cursor": ".."}  (resting/open orders)
 """
 
@@ -48,6 +50,12 @@ class Portfolio:
 
     def fills(self) -> List[dict]:
         return self._paginate("/portfolio/fills", "fills")
+
+    def historical_fills(self) -> List[dict]:
+        return self._paginate("/historical/fills", "fills")
+
+    def settlements(self) -> List[dict]:
+        return self._paginate("/portfolio/settlements", "settlements")
 
     def resting_orders(self) -> List[dict]:
         """Open/resting orders."""

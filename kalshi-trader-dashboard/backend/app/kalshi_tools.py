@@ -26,9 +26,47 @@ from kalshi_agent_trader.risk import ProposedOrder, RiskGate
 from kalshi_agent_trader.strategies.three_leg import runner as _three_leg_runner
 from kalshi_agent_trader.strategies.three_leg.screen import ThreeLegParams
 
+from .market_meta import market_meta, resolve_name, side_from_position
+
 
 def _j(obj: Any) -> str:
     return json.dumps(obj, default=str)
+
+
+def _enrich_positions(positions: list[dict], client: KalshiClient) -> list[dict]:
+    """Attach authoritative title/name/side from market data to each position.
+
+    Without this the agent only sees the ticker and guesses player names from its
+    suffix. `side` is derived from the signed position_fp; `name` is that side's
+    sub-title. Markets that fail to resolve simply keep their original fields.
+    """
+    meta = market_meta(client, [p.get("ticker") for p in positions])
+    enriched = []
+    for p in positions:
+        m = meta.get(p.get("ticker"))
+        side = side_from_position(p.get("position_fp"))
+        enriched.append({
+            **p,
+            "side": side,
+            "title": m.title if m else None,
+            "name": resolve_name(m, side),
+        })
+    return enriched
+
+
+def _enrich_orders(orders: list[dict], client: KalshiClient) -> list[dict]:
+    """Attach authoritative title/name to each order, keyed off its explicit side."""
+    meta = market_meta(client, [o.get("ticker") for o in orders])
+    enriched = []
+    for o in orders:
+        m = meta.get(o.get("ticker"))
+        side = o.get("side")
+        enriched.append({
+            **o,
+            "title": m.title if m else None,
+            "name": resolve_name(m, str(side).lower() if side else None),
+        })
+    return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +114,7 @@ def _get_events(inp: dict, client: KalshiClient) -> str:
 
 def _get_positions(inp: dict, client: KalshiClient) -> str:
     positions = Portfolio(client).market_positions()
-    return _j(positions)
+    return _j(_enrich_positions(positions, client))
 
 
 def _run_three_leg_screen(inp: dict) -> str:
@@ -106,7 +144,8 @@ def _get_account_status(inp: dict, client: KalshiClient) -> str:
         "portfolio_value_usd": str(bal.portfolio_value_usd()),
         "open_positions": len(positions),
         "resting_orders": len(resting),
-        "positions": positions[:20],
+        "positions": _enrich_positions(positions[:20], client),
+        "orders": _enrich_orders(resting, client),
     })
 
 

@@ -12,6 +12,7 @@ from kalshi_agent_trader.portfolio import Portfolio
 from ..config_writer import kill_switch_engaged
 from ..deps import cached, get_client, get_config
 from ..kalshi_tools import EXECUTOR_TOOLS, RESEARCH_TOOLS, execute_tool
+from ..market_meta import market_meta, resolve_name, side_from_position
 
 try:
     import anthropic as _anthropic
@@ -35,6 +36,7 @@ Operator: {username}
 ## Rules
 - Always call a tool to get current data before making claims about positions, prices, or order status.
 - Never guess at prices, fills, or exposure — fetch them.
+- Position/order/fill results include authoritative `title`, `name`, and `side` fields resolved from Kalshi's market data. ALWAYS use `name` for the player/team/contract and `side` for yes/no. NEVER infer names from ticker suffixes (e.g. do not turn `-ARN` into "Arnaldi" yourself — use the `name` field).
 - When recommending an order, state ticker, side, price, count, and rationale.
 - All orders go through compliance → risk gates — a rejection is informative, not an error.
 
@@ -53,6 +55,7 @@ Operator: {username}
 
 ## Rules
 - Always call a tool before making claims about prices, positions, or order status. Do not rely solely on the context snapshot below — it may be stale.
+- Position/order/fill results include authoritative `title`, `name`, and `side` fields resolved from Kalshi's market data. ALWAYS use `name` for the player/team/contract and `side` for yes/no. NEVER infer names from ticker suffixes (e.g. do not turn `-ARN` into "Arnaldi" yourself — use the `name` field).
 - Be quantitative: cite de-vigged fairs, EV, Kelly sizes.
 - You do not place orders. Hand off a GO/NO-GO recommendation to the Executor.
 
@@ -73,6 +76,8 @@ def _build_context(client) -> str:
         except Exception:
             return "Portfolio context unavailable."
 
+        meta = market_meta(client, [p.get("ticker") for p in positions[:10]])
+
         lines = [
             f"Kill switch: {'ENGAGED' if kill else 'clear'}",
             f"Mode: {'dry run (no live orders)' if dry_run else 'LIVE'}",
@@ -82,8 +87,11 @@ def _build_context(client) -> str:
             ticker = p.get("ticker", "?")
             pos = p.get("position_fp")
             exposure = p.get("market_exposure_dollars") or p.get("position_cost_dollars")
+            side = side_from_position(pos)
+            name = resolve_name(meta.get(ticker), side)
+            label = f"{name} ({side.upper()})  " if name and side else ""
             lines.append(
-                f"  • {ticker}  pos={pos}  exposure=${float(exposure or 0):.2f}"
+                f"  • {ticker}  {label}pos={pos}  exposure=${float(exposure or 0):.2f}"
             )
         if len(positions) > 10:
             lines.append(f"  … and {len(positions) - 10} more")
